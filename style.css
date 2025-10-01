@@ -17,6 +17,32 @@ body {
     margin: 0 auto;
 }
 
+.top-nav {
+    display: flex;
+    justify-content: flex-start;
+    align-items: center;
+    padding: 1em 0;
+    margin-bottom: 1em;
+    border-bottom: 1px solid #eee;
+}
+
+.top-nav a {
+    margin-right: 1.5em;
+    color: #333;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.top-nav a:hover {
+    color: #0066cc;
+    text-decoration: none;
+}
+
+.top-nav .nav-right {
+    margin-left: auto;
+    margin-right: 0;
+}
+
 h1 {
     font-size: 2.5em;
     font-weight: 600;
@@ -186,6 +212,21 @@ footer {
     border-top: 1px solid #eee;
     color: #999;
     font-size: 0.9em;
+}
+
+.footer-links {
+    margin-top: 0.5em;
+}
+
+.footer-links a {
+    color: #666;
+}
+
+.team-brief {
+    font-size: 1.05em;
+    color: #555;
+    line-height: 1.6;
+    margin-bottom: 2em;
 }
 
 /* Responsive */
