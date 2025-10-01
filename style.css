@@ -64,6 +64,53 @@ a:hover {
     text-decoration: underline;
 }
 
+.team-photo {
+    margin: 1.5em 0;
+}
+
+.team-photo img {
+    width: 100%;
+    max-width: 600px;
+    height: auto;
+    border-radius: 8px;
+    display: block;
+}
+
+.contents-list li {
+    margin-bottom: 0.5em;
+}
+
+.team-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 2em;
+    margin-top: 1.5em;
+}
+
+.team-member {
+    text-align: center;
+}
+
+.team-member img {
+    width: 150px;
+    height: 150px;
+    border-radius: 50%;
+    object-fit: cover;
+    margin-bottom: 1em;
+}
+
+.team-member-info strong {
+    display: block;
+    margin-bottom: 0.3em;
+    font-size: 1.1em;
+}
+
+.team-member-info p {
+    color: #666;
+    font-size: 0.95em;
+    margin-bottom: 0;
+}
+
 footer {
     margin-top: 4em;
     padding-top: 2em;
@@ -84,5 +131,10 @@ footer {
     
     h2 {
         font-size: 1.3em;
+    }
+
+    .team-grid {
+        grid-template-columns: 1fr;
+        gap: 1.5em;
     }
 }
