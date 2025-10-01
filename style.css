@@ -51,8 +51,57 @@ ul {
 }
 
 ul li {
-    margin-bottom: 0.8em;
+    margin-bottom: 2em;
     line-height: 1.6;
+}
+
+.item-header {
+    margin-bottom: 0.5em;
+}
+
+.item-header strong {
+    font-size: 1.05em;
+    color: #222;
+}
+
+.item-description {
+    margin-bottom: 0.5em;
+    color: #555;
+    line-height: 1.5;
+}
+
+.item-meta {
+    font-size: 0.9em;
+    color: #666;
+    margin-bottom: 0;
+}
+
+.item-meta a {
+    margin-right: 0.5em;
+}
+
+.status-badge {
+    display: inline-block;
+    padding: 0.15em 0.6em;
+    border-radius: 12px;
+    font-size: 0.85em;
+    font-weight: 500;
+    margin-left: 0.3em;
+}
+
+.status-badge.active {
+    background-color: #dcfce7;
+    color: #166534;
+}
+
+.status-badge.beta {
+    background-color: #dbeafe;
+    color: #1e40af;
+}
+
+.status-badge.in-development {
+    background-color: #fef3c7;
+    color: #92400e;
 }
 
 a {
@@ -109,10 +158,26 @@ a:hover {
     font-size: 1.1em;
 }
 
-.team-member-info p {
+.team-member-info .team-role {
     color: #666;
     font-size: 0.95em;
+    margin-bottom: 0.5em;
+}
+
+.team-member-info .team-bio {
+    color: #555;
+    font-size: 0.95em;
+    line-height: 1.5;
+    margin-bottom: 0.5em;
+}
+
+.team-member-info .team-links {
+    font-size: 0.9em;
     margin-bottom: 0;
+}
+
+.team-member-info .team-links a {
+    margin-right: 0.5em;
 }
 
 footer {
