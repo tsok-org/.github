@@ -80,15 +80,15 @@ a:hover {
     margin-bottom: 0.5em;
 }
 
-.team-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 2em;
+.team-list {
     margin-top: 1.5em;
 }
 
 .team-member {
-    text-align: center;
+    display: flex;
+    align-items: flex-start;
+    margin-bottom: 2em;
+    gap: 1.5em;
 }
 
 .team-member img {
@@ -96,7 +96,11 @@ a:hover {
     height: 150px;
     border-radius: 50%;
     object-fit: cover;
-    margin-bottom: 1em;
+    flex-shrink: 0;
+}
+
+.team-member-info {
+    flex: 1;
 }
 
 .team-member-info strong {
@@ -133,8 +137,9 @@ footer {
         font-size: 1.3em;
     }
 
-    .team-grid {
-        grid-template-columns: 1fr;
-        gap: 1.5em;
+    .team-member {
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
     }
 }
