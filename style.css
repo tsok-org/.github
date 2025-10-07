@@ -229,6 +229,21 @@ footer {
     margin-bottom: 2em;
 }
 
+.mermaid-container {
+    margin: 2em 0;
+    padding: 1.5em;
+    background: #fafafa;
+    border-radius: 8px;
+    border: 1px solid #e0e0e0;
+    overflow-x: auto;
+}
+
+.mermaid {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     body {
