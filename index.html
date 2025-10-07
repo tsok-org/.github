@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TSOK - The Source of Knowledge</title>
     <link rel="stylesheet" href="style.css">
+    <script src="https://unpkg.com/mermaid@10/dist/mermaid.min.js"></script>
+    <script>
+        mermaid.initialize({ startOnLoad: true, theme: 'default' });
+    </script>
 </head>
 <body>
     <div class="container">
@@ -36,6 +40,57 @@
                 Explore our <a href="#papers">papers</a>, <a href="#projects">projects</a>, 
                 <a href="#open-sourced">open source contributions</a>, and meet our <a href="team.html">team</a>.
             </p>
+        </section>
+
+        <section id="architecture">
+            <h2>AI Autonomous Operations Architecture</h2>
+            <div class="mermaid-container">
+                <div class="mermaid">
+flowchart LR
+    %% Simple, clean layout for a presentation slide
+
+    IN[Inputs: Market/Users/Data]
+    ORCH[AI Operator]
+    KNWG[Company : Knowledge / Memory / Data]
+    
+    subgraph AI[AI Autonomous Operations]
+        OPS[Operations Agent]
+        FIN[Finance Agent]
+        GRW[Growth Agent]
+        EXP[Expert Agent]
+    end
+
+    HBOARD[Human Oversight Board]
+    POLICY[Policy &amp; Guardrails]
+    OUT[Company Outcomes: Revenue / Growth]
+
+    %% Main flow
+    IN --&gt; ORCH --&gt; AI --&gt; OUT
+    KNWG --&gt; AI
+
+    %% Escalation paths
+    OPS -. Escalates edge cases .-> HBOARD
+    FIN -. Compliance review .-> HBOARD
+    GRW -. Strategic decisions .-> HBOARD
+    EXP -. Acts by instructions .-> HBOARD
+
+    %% Feedback loop
+    HBOARD --&gt; POLICY --&gt; ORCH
+
+    %% Styling
+    classDef io fill:#F5F7FA,stroke:#C7D0D9,color:#2F3B46,stroke-width:1.5px;
+    classDef ai fill:#E8F4FF,stroke:#3A8DFF,color:#0F2A4A,stroke-width:2px;
+    classDef human fill:#FFF2DB,stroke:#FF9D2E,color:#5B3A00,stroke-width:2px;
+    classDef policy fill:#E9FBEA,stroke:#2DBE60,color:#0D3B1E,stroke-width:2px;
+    classDef out fill:#EEF2FF,stroke:#6478FF,color:#1A237E,stroke-width:1.5px;
+
+    class IN io
+    class ORCH,OPS,FIN,GRW,EXP ai
+    class HBOARD human
+    class POLICY policy
+    class OUT out
+                </div>
+            </div>
         </section>
 
         <section id="papers">
