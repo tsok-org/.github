@@ -782,8 +782,7 @@ jobs:
             --body "$PR_BODY" \
             --head "$BRANCH" \
             --base "$BASE_BRANCH" \
-            "${LABEL_ARGS[@]}" \
-            --assignee "${{ inputs.actor }}")
+            "${LABEL_ARGS[@]}"
 
           # Extract PR number from URL
           PR_NUMBER=$(echo "$PR_URL" | grep -o '[0-9]*$')
