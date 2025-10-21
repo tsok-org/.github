@@ -70,15 +70,15 @@ on:
         type: string
         default: "build: 📦 update @nx/workspace to {version}"
       github_app_id:
-        description: "GitHub App ID for token generation. Only used if github_token secret is not provided. Pass via vars context (e.g., vars.GITHUB_APP_ID)."
+        description: "GitHub App ID for token generation. Only used if github_user_token secret is not provided. Pass via vars context (e.g., vars.GITHUB_APP_ID)."
         required: false
         type: string
     secrets:
-      github_token:
+      github_user_token:
         description: "GitHub token with repo write permissions. If not provided, will generate token from github_app_id input and github_app_private_key secret."
         required: false
       github_app_private_key:
-        description: "GitHub App private key for token generation. Only used if github_token secret is not provided."
+        description: "GitHub App private key for token generation. Only used if github_user_token secret is not provided."
         required: false
       nx_cloud_access_token:
         description: "NX Cloud access token (optional)"
@@ -130,9 +130,9 @@ jobs:
       - name: Set GitHub Token
         id: set-token
         run: |
-          if [ -n "${{ secrets.github_token }}" ]; then
-            echo "✅ Using provided github_token"
-            echo "token=${{ secrets.github_token }}" >> "$GITHUB_OUTPUT"
+          if [ -n "${{ secrets.github_user_token }}" ]; then
+            echo "✅ Using provided github_user_token"
+            echo "token=${{ secrets.github_user_token }}" >> "$GITHUB_OUTPUT"
             echo "is_app_token=false" >> "$GITHUB_OUTPUT"
           elif [ -n "${{ steps.generate-token.outputs.token }}" ]; then
             echo "✅ Using generated GitHub App token"
@@ -142,7 +142,7 @@ jobs:
             echo "app_user_id=${{ steps.get-app-user-id.outputs.user-id }}" >> "$GITHUB_OUTPUT"
           else
             echo "::error::No GitHub token available. Provide either:"
-            echo "::error::  1. github_token secret with a pre-generated token, OR"
+            echo "::error::  1. github_user_token secret with a pre-generated token, OR"
             echo "::error::  2. github_app_id input + github_app_private_key secret"
             exit 1
           fi
