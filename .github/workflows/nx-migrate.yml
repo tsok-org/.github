@@ -268,7 +268,7 @@ jobs:
         id: nx-version
         run: |
           # Get current version from package.json
-          CURRENT_VERSION=$(jq -r '.devDependencies."@nx/devkit" // .devDependencies."@nx/workspace"' package.json)
+          CURRENT_VERSION=$(jq -r '.devDependencies."@nx/devkit" // .devDependencies."@nx/workspace" // .devDependencies.nx' package.json)
           echo "current_version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
           echo "Current version: $CURRENT_VERSION"
 
@@ -306,9 +306,9 @@ jobs:
                 echo "Targeting major version: $SEARCH_MAJOR.x.x"
               fi
             else
-              SEARCH_MAJOR="$CURRENT_MAJOR"
+              SEARCH_MAJOR=""
               SEARCH_MINOR=""
-              echo "Staying in current major version: $SEARCH_MAJOR.x.x"
+              echo "No target major provided -> allow highest available major"
             fi
             
             # Fetch all versions
@@ -318,16 +318,16 @@ jobs:
             case "$CHANNEL" in
               stable)
                 echo "Finding latest stable version..."
-                if [ -n "$SEARCH_MINOR" ]; then
+                if [ -n "$SEARCH_MAJOR" ] && [ -n "$SEARCH_MINOR" ]; then
                   # Specific major.minor - get latest stable patch
                   LATEST_VERSION=$(echo "$ALL_VERSIONS" | \
                     jq -r '.[] | select(startswith("'$SEARCH_MAJOR'.'$SEARCH_MINOR'.") and (contains("-") | not))' | \
                     tail -1)
                 else
-                  # Latest stable in major version
+                  # Latest stable overall (or highest major if SEARCH_MAJOR blank)
                   LATEST_VERSION=$(echo "$ALL_VERSIONS" | \
-                    jq -r '.[] | select(startswith("'$SEARCH_MAJOR'.") and (contains("-") | not))' | \
-                    tail -1)
+                    jq -r '.[] | select((contains("-") | not))' | \
+                    sort -V | tail -1)
                 fi
                 ;;
                 
