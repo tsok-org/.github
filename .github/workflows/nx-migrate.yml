@@ -14,87 +14,80 @@ on:
         type: string
         default: "github-actions[bot]"
       node_version:
-        description: "Node.js version to use (e.g., '20', '20.x', '20.11.0'). If not provided, will use node_version_file."
+        description: "Node.js version (e.g., '20' or '20.11.0')"
         required: false
         type: string
       node_version_file:
-        description: "Path to file containing Node.js version (e.g., '.node-version', '.nvmrc'). Used only if node_version is not provided."
+        description: "Path to .node-version/.nvmrc file"
         required: false
         type: string
         default: ".node-version"
       version:
-        description: "Explicit NX version to migrate to (e.g., '21.0.0', '21.0.0-beta.1'). Takes precedence over channel."
+        description: "Explicit Nx version to migrate to"
         required: false
         type: string
       channel:
-        description: "NX release channel to use: 'stable' (x.y.z), 'rc' (x.y.z-rc.N), or 'beta' (x.y.z-beta.N). Only used if version is not provided."
+        description: "Release channel: 'stable', 'rc', 'beta', or 'canary'"
         required: false
         type: string
         default: "stable"
       major_version:
-        description: "Target major version for channel-based updates (e.g., '21'). Only used with channel. If not provided, stays in current major."
+        description: "Major version (optional, for pinning)"
         required: false
         type: string
       minor_version:
-        description: "Target minor version for channel-based updates (e.g., '0' for 21.0.x). Only used with channel and major_version."
+        description: "Minor version (optional, for pinning)"
         required: false
         type: string
       branch_name_template:
-        description: "Template for branch name. Use {version} as placeholder for NX version (e.g., 'nx-update-{version}', 'chore/nx-{version}'). Default: 'update-nx-{version}'"
+        description: "Branch name template (must include {version})"
         required: false
         type: string
         default: "update-nx-{version}"
       create_pr:
-        description: "Whether to create a pull request. If false, only pushes the branch."
+        description: "Whether to create a PR"
         required: false
         type: boolean
         default: true
       pr_title_template:
-        description: "Template for PR title. Use {version} for NX version, {version_type} for type (beta/rc/stable). Default: 'build: 📦 update Nx to {version}'"
+        description: "PR title template"
         required: false
         type: string
         default: "build: 📦 update Nx to {version}"
       pr_labels:
-        description: "Comma-separated list of labels to add to the PR (e.g., 'dependencies,automated'). Default: 'dependencies'"
+        description: "Comma-separated PR labels"
         required: false
         type: string
         default: "dependencies"
       pr_auto_merge:
-        description: "Whether to enable auto-merge on the PR. Requires branch protection rules to be configured."
+        description: "Enable auto-merge after checks"
         required: false
         type: boolean
         default: true
       commit_message_template:
-        description: "Template for commit messages. Use {version} as placeholder. Default: 'build: 📦 update @nx/workspace to {version}'"
+        description: "Commit message template"
         required: false
         type: string
         default: "build: 📦 update @nx/workspace to {version}"
       github_app_id:
-        description: "GitHub App ID for token generation. Only used if github_user_token secret is not provided. Pass via vars context (e.g., vars.GITHUB_APP_ID)."
+        description: "GitHub App ID (if using GitHub App tokens)"
         required: false
         type: string
     secrets:
       github_user_token:
-        description: "GitHub token with repo write permissions. If not provided, will generate token from github_app_id input and github_app_private_key secret."
         required: false
       github_app_private_key:
-        description: "GitHub App private key for token generation. Only used if github_user_token secret is not provided."
         required: false
       nx_cloud_access_token:
-        description: "NX Cloud access token (optional)"
         required: false
     outputs:
       migration_version:
-        description: "The NX version migrated to"
         value: ${{ jobs.nx-migrate.outputs.migration_version }}
       pr_number:
-        description: "The PR number created (if any)"
         value: ${{ jobs.nx-migrate.outputs.pr_number }}
       pr_url:
-        description: "The PR URL created (if any)"
         value: ${{ jobs.nx-migrate.outputs.pr_url }}
       has_changes:
-        description: "Whether any changes were made"
         value: ${{ jobs.nx-migrate.outputs.has_changes }}
 
 env:
@@ -102,8 +95,8 @@ env:
 
 jobs:
   nx-migrate:
-    name: "NX Workspace Migration"
     runs-on: ubuntu-latest
+    name: NX Workspace Migration
     outputs:
       migration_version: ${{ steps.nx-version.outputs.latest_version }}
       pr_number: ${{ steps.push-and-pr.outputs.pr_number }}
@@ -111,706 +104,113 @@ jobs:
       has_changes: ${{ steps.check-changes.outputs.has_changes }}
 
     steps:
-      - name: Generate GitHub App Token
-        if: inputs.github_app_id != ''
-        uses: actions/create-github-app-token@v1
-        id: generate-token
-        with:
-          app-id: ${{ inputs.github_app_id }}
-          private-key: ${{ secrets.github_app_private_key }}
-
-      - name: Get GitHub App User ID
-        if: steps.generate-token.outputs.token != ''
-        id: get-app-user-id
-        run: |
-          echo "user-id=$(gh api "/users/${{ steps.generate-token.outputs.app-slug }}[bot]" --jq .id)" >> "$GITHUB_OUTPUT"
-        env:
-          GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
-
-      - name: Set GitHub Token
-        id: set-token
-        run: |
-          if [ -n "${{ secrets.github_user_token }}" ]; then
-            echo "✅ Using provided github_user_token"
-            echo "token=${{ secrets.github_user_token }}" >> "$GITHUB_OUTPUT"
-            echo "is_app_token=false" >> "$GITHUB_OUTPUT"
-          elif [ -n "${{ steps.generate-token.outputs.token }}" ]; then
-            echo "✅ Using generated GitHub App token"
-            echo "token=${{ steps.generate-token.outputs.token }}" >> "$GITHUB_OUTPUT"
-            echo "is_app_token=true" >> "$GITHUB_OUTPUT"
-            echo "app_slug=${{ steps.generate-token.outputs.app-slug }}" >> "$GITHUB_OUTPUT"
-            echo "app_user_id=${{ steps.get-app-user-id.outputs.user-id }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "::error::No GitHub token available. Provide either:"
-            echo "::error::  1. github_user_token secret with a pre-generated token, OR"
-            echo "::error::  2. github_app_id input + github_app_private_key secret"
-            exit 1
-          fi
-
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          filter: tree:0
           fetch-depth: 0
-          token: ${{ steps.set-token.outputs.token }}
 
-      - name: Set SHA
-        uses: nrwl/nx-set-shas@v4
-
-      - name: Setup Node.js (with version)
-        if: inputs.node_version != ''
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ inputs.node_version }}
-          cache: "npm"
-
-      - name: Setup Node.js (with version file)
-        if: inputs.node_version == '' && inputs.node_version_file != ''
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version-file: ${{ inputs.node_version_file }}
-          cache: "npm"
-
-      - name: Setup Node.js (default)
-        if: inputs.node_version == '' && inputs.node_version_file == ''
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
+          cache: npm
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Validate Nx Installation
-        id: validate-nx
-        run: |
-          # Check if Nx packages exist in package.json
-          if ! jq -e '.devDependencies."@nx/devkit" // .devDependencies."@nx/workspace"' package.json >/dev/null 2>&1; then
-            echo "::error::No Nx packages found in package.json. This workflow requires @nx/devkit or @nx/workspace."
-            echo "::error::Please ensure this is an Nx workspace before running migrations."
-            exit 1
-          fi
-          
-          # Validate version input format (if provided)
-          if [ -n "${{ inputs.version }}" ]; then
-            VERSION_INPUT="${{ inputs.version }}"
-            # Check for valid semver format (basic check)
-            if ! [[ "$VERSION_INPUT" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
-              echo "::error::Invalid version format: $VERSION_INPUT"
-              echo "::error::Expected format: X.Y.Z or X.Y.Z-prerelease (e.g., 21.0.0, 21.0.0-beta.1)"
-              exit 1
-            fi
-          fi
-          
-          # Validate major/minor version inputs (if provided)
-          if [ -n "${{ inputs.major_version }}" ]; then
-            if ! [[ "${{ inputs.major_version }}" =~ ^[0-9]+$ ]]; then
-              echo "::error::major_version must be a number (e.g., '21')"
-              exit 1
-            fi
-          fi
-          
-          if [ -n "${{ inputs.minor_version }}" ]; then
-            if ! [[ "${{ inputs.minor_version }}" =~ ^[0-9]+$ ]]; then
-              echo "::error::minor_version must be a number (e.g., '0')"
-              exit 1
-            fi
-            
-            if [ -z "${{ inputs.major_version }}" ]; then
-              echo "::error::minor_version requires major_version to be set"
-              exit 1
-            fi
-          fi
-          
-          # Validate branch_name_template contains {version}
-          if ! [[ "${{ inputs.branch_name_template }}" == *"{version}"* ]]; then
-            echo "::error::branch_name_template must contain {version} placeholder"
-            exit 1
-          fi
-          
-          echo "✅ Validation passed"
-
-      - name: Setup Git User
-        run: |
-          # If using GitHub App token, use app-slug for git user
-          if [ "${{ steps.set-token.outputs.is_app_token }}" == "true" ]; then
-            APP_SLUG="${{ steps.set-token.outputs.app_slug }}"
-            USER_ID="${{ steps.set-token.outputs.app_user_id }}"
-            git config --global user.name "${APP_SLUG}[bot]"
-            git config --global user.email "${USER_ID}+${APP_SLUG}[bot]@users.noreply.github.com"
-            echo "✅ Git user configured as: ${APP_SLUG}[bot]"
-          else
-            # Try to extract user name and email from the token
-            if USER_INFO=$(gh api /user 2>/dev/null); then
-              USER_NAME=$(echo "$USER_INFO" | jq -r '.login')
-              USER_ID=$(echo "$USER_INFO" | jq -r '.id')
-              git config --global user.name "$USER_NAME"
-              git config --global user.email "${USER_ID}+${USER_NAME}@users.noreply.github.com"
-              echo "✅ Git user configured as: $USER_NAME"
-            else
-              # Fallback: use provided actor or default
-              ACTOR="${{ inputs.actor }}"
-              if [ -z "$ACTOR" ] || [ "$ACTOR" == "github-actions[bot]" ]; then
-                git config --global user.name "github-actions[bot]"
-                git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-                echo "✅ Git user configured as: github-actions[bot] (fallback)"
-              else
-                git config --global user.name "$ACTOR"
-                git config --global user.email "${ACTOR}@users.noreply.github.com"
-                echo "✅ Git user configured as: $ACTOR (fallback)"
-              fi
-            fi
-          fi
-        env:
-          GITHUB_TOKEN: ${{ steps.set-token.outputs.token }}
-
       - name: Get current and latest Nx version
         id: nx-version
         run: |
-          # Get current version from package.json
           CURRENT_VERSION=$(jq -r '.devDependencies."@nx/devkit" // .devDependencies."@nx/workspace" // .devDependencies.nx' package.json)
-          echo "current_version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
           echo "Current version: $CURRENT_VERSION"
 
-          # Determine target version based on inputs
-          if [ -n "${{ inputs.version }}" ]; then
-            # Explicit version provided - use it directly
-            LATEST_VERSION="${{ inputs.version }}"
-            echo "Using explicit version: $LATEST_VERSION"
-          else
-            # Channel-based version selection
-            CHANNEL="${{ inputs.channel }}"
-            TARGET_MAJOR="${{ inputs.major_version }}"
-            TARGET_MINOR="${{ inputs.minor_version }}"
-            
-            echo "Using channel-based version selection: channel=$CHANNEL"
-            
-            # Extract current major/minor version
-            if [[ "$CURRENT_VERSION" =~ ^([0-9]+)\.([0-9]+)\. ]]; then
-              CURRENT_MAJOR="${BASH_REMATCH[1]}"
-              CURRENT_MINOR="${BASH_REMATCH[2]}"
-              echo "Current major.minor: $CURRENT_MAJOR.$CURRENT_MINOR"
-            else
-              echo "::error::Could not parse current version: $CURRENT_VERSION"
-              exit 1
-            fi
-            
-            # Determine target major/minor
-            if [ -n "$TARGET_MAJOR" ]; then
-              SEARCH_MAJOR="$TARGET_MAJOR"
-              if [ -n "$TARGET_MINOR" ]; then
-                SEARCH_MINOR="$TARGET_MINOR"
-                echo "Targeting specific version: $SEARCH_MAJOR.$SEARCH_MINOR.x"
-              else
-                SEARCH_MINOR=""
-                echo "Targeting major version: $SEARCH_MAJOR.x.x"
-              fi
-            else
-              SEARCH_MAJOR=""
-              SEARCH_MINOR=""
-              echo "No target major provided -> allow highest available major"
-            fi
-            
-            # Fetch all versions
-            ALL_VERSIONS=$(npm view @nx/workspace versions --json)
-            
-            # Build version filter based on channel
-            case "$CHANNEL" in
-              stable)
-                echo "Finding latest stable version..."
-                if [ -n "$SEARCH_MAJOR" ] && [ -n "$SEARCH_MINOR" ]; then
-                  # Specific major.minor - get latest stable patch
-                  LATEST_VERSION=$(echo "$ALL_VERSIONS" | \
-                    jq -r '.[] | select(startswith("'$SEARCH_MAJOR'.'$SEARCH_MINOR'.") and (contains("-") | not))' | \
-                    tail -1)
-                else
-                  # Latest stable overall (or highest major if SEARCH_MAJOR blank)
-                  LATEST_VERSION=$(echo "$ALL_VERSIONS" | \
-                    jq -r '.[] | select((contains("-") | not))' | \
-                    sort -V | tail -1)
-                fi
-                ;;
-                
-              rc)
-                echo "Finding latest RC version..."
-                if [ -n "$SEARCH_MINOR" ]; then
-                  # Specific major.minor - get latest RC
-                  LATEST_VERSION=$(echo "$ALL_VERSIONS" | \
-                    jq -r '.[] | select(startswith("'$SEARCH_MAJOR'.'$SEARCH_MINOR'.") and contains("-rc."))' | \
-                    tail -1)
-                  
-                  # If no RC found, check for stable version
-                  if [ -z "$LATEST_VERSION" ]; then
-                    echo "No RC version found, checking for stable..."
-                    LATEST_VERSION=$(echo "$ALL_VERSIONS" | \
-                      jq -r '.[] | select(startswith("'$SEARCH_MAJOR'.'$SEARCH_MINOR'.") and (contains("-") | not))' | \
-                      tail -1)
-                  fi
-                else
-                  # Latest RC in major version
-                  LATEST_VERSION=$(echo "$ALL_VERSIONS" | \
-                    jq -r '.[] | select(startswith("'$SEARCH_MAJOR'.") and contains("-rc."))' | \
-                    tail -1)
-                  
-                  # If no RC found, check for stable version
-                  if [ -z "$LATEST_VERSION" ]; then
-                    echo "No RC version found, checking for stable..."
-                    LATEST_VERSION=$(echo "$ALL_VERSIONS" | \
-                      jq -r '.[] | select(startswith("'$SEARCH_MAJOR'.") and (contains("-") | not))' | \
-                      tail -1)
-                  fi
-                fi
-                ;;
-                
-              beta)
-                echo "Finding latest beta version..."
-                if [ -n "$SEARCH_MAJOR" ] && [ -n "$SEARCH_MINOR" ]; then
-                  # Specific major.minor - get latest beta
-                  LATEST_VERSION=$(echo "$ALL_VERSIONS" | \
-                    jq -r '.[] | select(startswith("'$SEARCH_MAJOR'.'$SEARCH_MINOR'.") and contains("-beta."))' | \
-                    tail -1)
-                  
-                  # If no beta found, check for RC, then stable
-                  if [ -z "$LATEST_VERSION" ]; then
-                    echo "No beta version found, checking for RC..."
-                    LATEST_VERSION=$(echo "$ALL_VERSIONS" | \
-                      jq -r '.[] | select(startswith("'$SEARCH_MAJOR'.'$SEARCH_MINOR'.") and contains("-rc."))' | \
-                      tail -1)
-                  fi
-                  
-                  if [ -z "$LATEST_VERSION" ]; then
-                    echo "No RC version found, checking for stable..."
-                    LATEST_VERSION=$(echo "$ALL_VERSIONS" | \
-                      jq -r '.[] | select(startswith("'$SEARCH_MAJOR'.'$SEARCH_MINOR'.") and (contains("-") | not))' | \
-                      tail -1)
-                  fi
-                else
-                  # Latest beta in major version
-                  LATEST_VERSION=$(echo "$ALL_VERSIONS" | \
-                    jq -r '.[] | select(contains("-beta."))' | \
-                    sort -V | tail -1)
-                  
-                  # If no beta found, check for RC, then stable
-                  if [ -z "$LATEST_VERSION" ]; then
-                    echo "No beta version found, checking for RC..."
-                    LATEST_VERSION=$(echo "$ALL_VERSIONS" | \
-                      jq -r '.[] | select(contains("-rc."))' | \
-                      sort -V | tail -1)
-                  fi
-                  
-                  if [ -z "$LATEST_VERSION" ]; then
-                    echo "No RC version found, checking for stable..."
-                    LATEST_VERSION=$(echo "$ALL_VERSIONS" | \
-                      jq -r '.[] | select((contains("-") | not))' | \
-                      sort -V | tail -1)
-                  fi
-                fi
-                ;;
-                
-              *)
-                echo "::error::Invalid channel: $CHANNEL. Must be 'stable', 'rc', or 'beta'."
-                exit 1
-                ;;
-            esac
-            
-            # Validate we found a version
-            if [ -z "$LATEST_VERSION" ]; then
-              echo "::error::Could not find any version matching the criteria"
-              echo "::error::Channel: $CHANNEL, Major: $SEARCH_MAJOR, Minor: $SEARCH_MINOR"
-              exit 1
-            fi
-            
-            echo "Found version: $LATEST_VERSION"
-          fi
+          CHANNEL="${{ inputs.channel }}"
+          MAJOR="${{ inputs.major_version }}"
+          MINOR="${{ inputs.minor_version }}"
 
-          # Detect version type for current version
-          if [[ "$CURRENT_VERSION" =~ -(beta|rc|alpha|next)\. ]]; then
-            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
-            PRERELEASE_TAG=$(echo "$CURRENT_VERSION" | sed -n 's/.*-\(beta\|rc\|alpha\|next\)\..*/\1/p')
-            echo "prerelease_tag=$PRERELEASE_TAG" >> "$GITHUB_OUTPUT"
-          else
-            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
-          fi
+          ALL_VERSIONS=$(npm view @nx/workspace versions --json | jq -r '.[]')
+          echo "Fetched $(echo "$ALL_VERSIONS" | wc -l) versions from npm."
 
-          echo "latest_version=$LATEST_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Latest version: $LATEST_VERSION"
-
-      - name: Check if @nx/workspace is outdated
-        id: nx-outdated
-        run: |
-          CURRENT="${{ steps.nx-version.outputs.current_version }}"
-          LATEST="${{ steps.nx-version.outputs.latest_version }}"
-
-          echo "Comparing versions:"
-          echo "  Current: $CURRENT"
-          echo "  Latest:  $LATEST"
-
-          # Simple string comparison - if they're different, there's an update
-          if [ "$CURRENT" != "$LATEST" ]; then
-            echo "outdated=true" >> "$GITHUB_OUTPUT"
-            echo "✅ Update available: $CURRENT → $LATEST"
-          else
-            echo "outdated=false" >> "$GITHUB_OUTPUT"
-            echo "✅ Already on latest version: $CURRENT"
-          fi
-
-      - name: Check for existing Nx update PRs
-        id: nx-pr-check
-        run: |
-          VERSION="${{ steps.nx-version.outputs.latest_version }}"
-          BRANCH_TEMPLATE="${{ inputs.branch_name_template }}"
-          EXPECTED_BRANCH="${BRANCH_TEMPLATE//\{version\}/$VERSION}"
-
-          echo "Expected branch name: $EXPECTED_BRANCH"
-
-          # Check for any existing nx update PRs (by branch name pattern)
-          # Extract pattern prefix for matching (e.g., "update-nx-" from "update-nx-{version}")
-          BRANCH_PREFIX="${BRANCH_TEMPLATE%%\{version\}*}"
-
-          EXISTING_PRS=$(gh pr list --json number,headRefName,title,labels --jq '.[] | select(.headRefName | startswith("'$BRANCH_PREFIX'"))')
-
-          if [ -n "$EXISTING_PRS" ]; then
-            echo "existing_prs=true" >> "$GITHUB_OUTPUT"
-            # Get the first PR details
-            FIRST_PR=$(echo "$EXISTING_PRS" | jq -r '.number' | head -1)
-            FIRST_PR_BRANCH=$(echo "$EXISTING_PRS" | jq -r '.headRefName' | head -1)
-            echo "existing_pr_number=$FIRST_PR" >> "$GITHUB_OUTPUT"
-            echo "existing_pr_branch=$FIRST_PR_BRANCH" >> "$GITHUB_OUTPUT"
-            echo "expected_branch=$EXPECTED_BRANCH" >> "$GITHUB_OUTPUT"
-          else
-            echo "existing_prs=false" >> "$GITHUB_OUTPUT"
-            echo "expected_branch=$EXPECTED_BRANCH" >> "$GITHUB_OUTPUT"
-          fi
-        env:
-          GITHUB_TOKEN: ${{ steps.set-token.outputs.token }}
-
-      - name: Handle existing PR - close and replace with new version
-        if: steps.nx-pr-check.outputs.existing_prs == 'true' && steps.nx-outdated.outputs.outdated == 'true'
-        run: |
-          EXPECTED_BRANCH="${{ steps.nx-pr-check.outputs.expected_branch }}"
-          EXISTING_BRANCH="${{ steps.nx-pr-check.outputs.existing_pr_branch }}"
-          VERSION="${{ steps.nx-version.outputs.latest_version }}"
-
-          # Check if existing PR is for a different version
-          if [[ "$EXISTING_BRANCH" != "$EXPECTED_BRANCH" ]]; then
-            echo "Closing existing PR for older version and will create new one for $VERSION"
-            gh pr close ${{ steps.nx-pr-check.outputs.existing_pr_number }} \
-              --comment "Closing this PR as a newer version of @nx/workspace ($VERSION) is available. A new PR will be created automatically."
-            
-            # Delete the old branch if it exists
-            if git ls-remote --exit-code --heads origin "$EXISTING_BRANCH" >/dev/null 2>&1; then
-              echo "Deleting remote branch: $EXISTING_BRANCH"
-              git push origin --delete "$EXISTING_BRANCH"
-            else
-              echo "Branch $EXISTING_BRANCH doesn't exist remotely (already deleted)"
-            fi
-            
-            echo "should_proceed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Existing PR is already for the latest version ($VERSION)"
-            echo "should_proceed=false" >> "$GITHUB_OUTPUT"
-          fi
-        id: handle-existing-pr
-        env:
-          GITHUB_TOKEN: ${{ steps.set-token.outputs.token }}
-
-      - name: Set should_proceed default if not set
-        id: set-proceed-default
-        run: |
-          # Set default value if handle-existing-pr didn't run
-          if [ -z "${{ steps.handle-existing-pr.outputs.should_proceed }}" ]; then
-            echo "should_proceed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_proceed=${{ steps.handle-existing-pr.outputs.should_proceed }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Calculate should migrate
-        id: should-migrate
-        run: |
-          # Consolidate migration decision logic into single output
-          if [ "${{ steps.nx-outdated.outputs.outdated }}" == "true" ] && \
-             ( [ "${{ steps.nx-pr-check.outputs.existing_prs }}" != "true" ] || \
-               [ "${{ steps.set-proceed-default.outputs.should_proceed }}" == "true" ] ); then
-            echo "should_migrate=true" >> "$GITHUB_OUTPUT"
-            echo "✅ Migration should proceed"
-          else
-            echo "should_migrate=false" >> "$GITHUB_OUTPUT"
-            echo "⏭️ Migration will be skipped"
-          fi
-
-      - name: End early if nothing to do
-        if: steps.should-migrate.outputs.should_migrate != 'true'
-        run: |
-          echo "No Nx migration required – exiting."
-          exit 0
-
-      - name: Create feature branch
-        if: steps.should-migrate.outputs.should_migrate == 'true'
-        run: |
-          BRANCH="${{ steps.nx-pr-check.outputs.expected_branch }}"
-          git checkout -b "$BRANCH"
-          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
-        id: create-branch
-
-      - name: Run nx migrate
-        if: steps.should-migrate.outputs.should_migrate == 'true'
-        run: |
-          VERSION="${{ steps.nx-version.outputs.latest_version }}"
-          CURRENT="${{ steps.nx-version.outputs.current_version }}"
-
-          # Safety check: ensure VERSION is not empty and not the same as current
-          if [ -z "$VERSION" ]; then
-            echo "::error::Target version is empty - aborting migration"
-            exit 1
-          fi
-
-          if [ "$VERSION" == "$CURRENT" ]; then
-            echo "::warning::Target version ($VERSION) is same as current ($CURRENT) - skipping migration"
-            exit 0
-          fi
-
-          # Extract major versions for comparison
-          CURRENT_MAJOR=$(echo "$CURRENT" | cut -d. -f1)
-          TARGET_MAJOR=$(echo "$VERSION" | cut -d. -f1)
-
-          # Prevent major version downgrades
-          if [ "$TARGET_MAJOR" -lt "$CURRENT_MAJOR" ]; then
-            echo "::error::Would downgrade from major version $CURRENT_MAJOR to $TARGET_MAJOR - aborting"
-            echo "::error::Current: $CURRENT, Target: $VERSION"
-            exit 1
-          fi
-
-          echo "✅ Migrating from $CURRENT to $VERSION"
-          echo "Running: npx nx migrate $VERSION"
-          npx nx migrate "$VERSION"
-
-      - name: Check for package.json changes
-        if: steps.should-migrate.outputs.should_migrate == 'true'
-        id: check-package-changes
-        run: |
-          if git diff --quiet package*.json; then
-            echo "has_package_changes=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_package_changes=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Commit package.json changes
-        if: steps.check-package-changes.outputs.has_package_changes == 'true'
-        run: |
-          VERSION="${{ steps.nx-version.outputs.latest_version }}"
-          COMMIT_TEMPLATE="${{ inputs.commit_message_template }}"
-          COMMIT_MESSAGE="${COMMIT_TEMPLATE//\{version\}/$VERSION}"
-
-          git add package*.json
-          git commit -m "$COMMIT_MESSAGE"
-
-      - name: Re-install dependencies
-        if: steps.check-package-changes.outputs.has_package_changes == 'true'
-        run: npm install
-
-      - name: Commit lockfile changes
-        if: steps.check-package-changes.outputs.has_package_changes == 'true'
-        run: |
-          if ! git diff --quiet package-lock.json; then
-            git add package-lock.json
-            git commit -m "build: 📦 update package-lock.json"
-          fi
-
-      - name: Ensure Nx CLI devDependency
-        if: steps.should-migrate.outputs.should_migrate == 'true'
-        id: ensure-nx-cli
-        run: |
-          if ! jq -e '.devDependencies.nx' package.json >/dev/null 2>&1; then
-            VERSION="${{ steps.nx-version.outputs.latest_version }}"
-            echo "Adding nx@$VERSION to devDependencies"
-            npm install -D "nx@$VERSION"
-            git add package.json package-lock.json || true
-            git commit -m "build: 📦 add nx CLI devDependency @$VERSION" || true
-          else
-            echo "nx CLI already present in devDependencies"
-          fi
-
-      - name: Check if migrations.json exists
-        if: steps.should-migrate.outputs.should_migrate == 'true'
-        id: has-migrations
-        run: |
-          echo "has_migrations=$([ -f migrations.json ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-
-      - name: Run migrations
-        if: steps.has-migrations.outputs.has_migrations == 'true'
-        run: |
-          npx nx migrate --run-migrations --create-commits || {
-            echo "::error::Migration failed. Please review and fix manually."
-            exit 1
+          filter_versions() {
+            local pattern="$1"
+            echo "$ALL_VERSIONS" | grep -E "$pattern" || true
           }
 
-      - name: Remove migrations.json & commit
-        if: steps.has-migrations.outputs.has_migrations == 'true'
-        run: |
-          if [ -f migrations.json ]; then
-            git rm -f migrations.json
-            if git commit -m "build: 📦 remove migrations.json"; then
-              echo "✅ migrations.json removed and committed"
-            else
-              echo "::warning::Failed to commit migrations.json removal (may already be removed)"
-            fi
-          else
-            echo "✅ migrations.json already removed"
+          case "$CHANNEL" in
+            canary)
+              echo "Channel: canary (includes canary, beta, rc, stable)"
+              MATCHED=$(filter_versions '-canary\.| -beta\.| -rc\.|^[0-9]+\.[0-9]+\.[0-9]+$')
+              ;;
+            beta)
+              echo "Channel: beta (includes beta, rc, stable)"
+              MATCHED=$(filter_versions '-beta\.| -rc\.|^[0-9]+\.[0-9]+\.[0-9]+$')
+              ;;
+            rc)
+              echo "Channel: rc (includes rc, stable)"
+              MATCHED=$(filter_versions '-rc\.|^[0-9]+\.[0-9]+\.[0-9]+$')
+              ;;
+            stable)
+              echo "Channel: stable (only stable releases)"
+              MATCHED=$(filter_versions '^[0-9]+\.[0-9]+\.[0-9]+$')
+              ;;
+            *)
+              echo "::error::Invalid channel: $CHANNEL"
+              exit 1
+              ;;
+          esac
+
+          if [ -n "$MAJOR" ]; then
+            MATCHED=$(echo "$MATCHED" | grep "^$MAJOR\." || true)
           fi
 
-      - name: Check if any changes were made
-        if: steps.should-migrate.outputs.should_migrate == 'true'
-        id: check-changes
-        run: |
-          BASE_BRANCH="${{ inputs.base_branch }}"
-          if git diff --quiet "$BASE_BRANCH"..HEAD; then
-            echo "has_changes=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          if [ -n "$MINOR" ]; then
+            MATCHED=$(echo "$MATCHED" | grep "^$MAJOR\.$MINOR\." || true)
           fi
 
-      - name: Stop if no changes
-        if: steps.check-changes.outputs.has_changes == 'false'
-        run: |
-          echo "No changes were made during migration. Exiting without creating PR."
-          exit 0
-
-      - name: Push branch & create PR
-        if: steps.check-changes.outputs.has_changes == 'true'
-        id: push-and-pr
-        run: |
-          VERSION="${{ steps.nx-version.outputs.latest_version }}"
-          CURRENT_VERSION="${{ steps.nx-version.outputs.current_version }}"
-          BRANCH="${{ steps.create-branch.outputs.branch }}"
-          BASE_BRANCH="${{ inputs.base_branch }}"
-
-          # Push the branch with error handling
-          if ! git push --set-upstream origin "$BRANCH"; then
-            echo "::error::Failed to push branch $BRANCH"
+          if [ -z "$MATCHED" ]; then
+            echo "::error::No versions matched the criteria"
             exit 1
           fi
 
-          # Exit early if PR creation is disabled
-          if [ "${{ inputs.create_pr }}" != "true" ]; then
-            echo "PR creation disabled - branch pushed successfully"
-            echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+          LATEST_VERSION=$(echo "$MATCHED" | sort -V | tail -1)
+          echo "Latest version: $LATEST_VERSION"
 
-          # Determine version type
-          if [[ "$VERSION" =~ -beta\. ]]; then
-            VERSION_BADGE="⚠️ Beta"
-            VERSION_TYPE="beta"
-          elif [[ "$VERSION" =~ -rc\. ]]; then
-            VERSION_BADGE="🔶 Release Candidate"
-            VERSION_TYPE="rc"
-          elif [[ "$VERSION" =~ -(alpha|next)\. ]]; then
-            VERSION_BADGE="⚠️ ${BASH_REMATCH[1]^}"
-            VERSION_TYPE="${BASH_REMATCH[1]}"
-          else
-            VERSION_BADGE="✅ Stable"
-            VERSION_TYPE="stable"
-          fi
+          echo "current_version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "latest_version=$LATEST_VERSION" >> "$GITHUB_OUTPUT"
 
-          # Build PR title from template
-          PR_TITLE_TEMPLATE="${{ inputs.pr_title_template }}"
-          PR_TITLE="${PR_TITLE_TEMPLATE//\{version\}/$VERSION}"
-          PR_TITLE="${PR_TITLE//\{version_type\}/$VERSION_TYPE}"
-
-          # Build PR body
-          PR_BODY="## Nx Workspace Migration"
-          PR_BODY="$PR_BODY"$'\n\n'"**Version:** ${CURRENT_VERSION} → ${VERSION} ${VERSION_BADGE}"
-
-          # Add update strategy information
-          if [ -n "${{ inputs.version }}" ]; then
-            PR_BODY="$PR_BODY"$'\n'"**Update Strategy:** Explicit version (\`${{ inputs.version }}\`)"
-          else
-            PR_BODY="$PR_BODY"$'\n'"**Update Strategy:** Channel-based (\`${{ inputs.channel }}\` channel"
-            if [ -n "${{ inputs.major_version }}" ]; then
-              PR_BODY="$PR_BODY, targeting v${{ inputs.major_version }}"
-              if [ -n "${{ inputs.minor_version }}" ]; then
-                PR_BODY="$PR_BODY.${{ inputs.minor_version }}.x"
-              else
-                PR_BODY="$PR_BODY.x.x"
-              fi
-            fi
-            PR_BODY="$PR_BODY)"
-          fi
-
-          PR_BODY="$PR_BODY"$'\n\n'"### What Changed"
-          PR_BODY="$PR_BODY"$'\n'"- Updated all \`@nx/*\` packages to \`${VERSION}\`"
-          PR_BODY="$PR_BODY"$'\n'"- Applied automated migrations"
-          PR_BODY="$PR_BODY"$'\n'"- Updated \`package-lock.json\`"
-
-          # Add warnings/notes based on version type
-          if [ "$VERSION_TYPE" == "beta" ]; then
-            PR_BODY="$PR_BODY"$'\n\n'"### ⚠️  Beta Version Warning"
-            PR_BODY="$PR_BODY"$'\n'"This is a beta release and may contain:"
-            PR_BODY="$PR_BODY"$'\n'"- Experimental features"
-            PR_BODY="$PR_BODY"$'\n'"- Breaking changes"
-            PR_BODY="$PR_BODY"$'\n'"- Bugs and stability issues"
-            PR_BODY="$PR_BODY"$'\n\n'"**Not recommended for production use.** Review changes carefully."
-          elif [ "$VERSION_TYPE" == "rc" ]; then
-            PR_BODY="$PR_BODY"$'\n\n'"### 🔶 Release Candidate"
-            PR_BODY="$PR_BODY"$'\n'"This is a release candidate - nearly stable but still being tested."
-            PR_BODY="$PR_BODY"$'\n'"Review the [release notes](https://github.com/nrwl/nx/releases/tag/${VERSION}) before merging."
-          elif [ "$VERSION_TYPE" == "stable" ] && [[ "$CURRENT_VERSION" =~ -(beta|rc)\. ]]; then
-            PR_BODY="$PR_BODY"$'\n\n'"### ✅ Stable Release"
-            PR_BODY="$PR_BODY"$'\n'"Upgrading from prerelease to stable - more reliable and production-ready."
-          fi
-
-          PR_BODY="$PR_BODY"$'\n\n'"---"
-          PR_BODY="$PR_BODY"$'\n'"🤖 *Automated by Nx Migration Workflow*"
-
-          echo "Creating PR: $PR_TITLE"
-
-          # Parse labels from comma-separated string using jq for safety
-          LABELS="${{ inputs.pr_labels }}"
-          LABEL_ARGS=()
-          if [ -n "$LABELS" ]; then
-            # Use jq to safely split and trim labels
-            while IFS= read -r label; do
-              if [ -n "$label" ]; then
-                LABEL_ARGS+=("--label" "$label")
-              fi
-            done < <(echo "$LABELS" | jq -R 'split(",") | .[] | gsub("^\\s+|\\s+$"; "")')
-          fi
-
-          # Create PR with labels
-          PR_URL=$(gh pr create \
-            --title "$PR_TITLE" \
-            --body "$PR_BODY" \
-            --head "$BRANCH" \
-            --base "$BASE_BRANCH" \
-            "${LABEL_ARGS[@]}")
-
-          # Extract PR number from URL
-          PR_NUMBER=$(echo "$PR_URL" | grep -o '[0-9]*$')
-
-          # Expose for later steps
-          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
-          echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
-          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
-        env:
-          GITHUB_TOKEN: ${{ steps.set-token.outputs.token }}
-
-      - name: Enable auto-merge
-        if: steps.check-changes.outputs.has_changes == 'true' && inputs.create_pr == true && inputs.pr_auto_merge == true
-        env:
-          GITHUB_TOKEN: ${{ steps.set-token.outputs.token }}
+      - name: Check if update needed
+        id: check
         run: |
-          PR_NUMBER="${{ steps.push-and-pr.outputs.pr_number }}"
-
-          # Enable auto-merge using PR number - GitHub will automatically merge when all required status checks pass
-          # Note: This step fails gracefully if auto-merge can't be enabled (e.g., branch protection not configured)
-          # The PR will still be created successfully; it just won't auto-merge.
-          if gh pr merge "$PR_NUMBER" --auto --squash --delete-branch; then
-            echo "✅ Auto-merge enabled. PR #$PR_NUMBER will be automatically merged when all status checks pass."
+          if [ "${{ steps.nx-version.outputs.current_version }}" != "${{ steps.nx-version.outputs.latest_version }}" ]; then
+            echo "should_update=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::Failed to enable auto-merge for PR #$PR_NUMBER."
-            echo "::warning::Possible reasons:"
-            echo "::warning::  - Branch protection rules not configured to allow auto-merge"
-            echo "::warning::  - Required status checks not defined"
-            echo "::warning::  - Insufficient permissions"
-            echo "::warning::The PR was created successfully but will require manual merge."
+            echo "should_update=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Exit early if up to date
+        if: steps.check.outputs.should_update == 'false'
+        run: echo "Already up to date."
+
+      - name: Create branch and migrate
+        if: steps.check.outputs.should_update == 'true'
+        run: |
+          VERSION="${{ steps.nx-version.outputs.latest_version }}"
+          BRANCH="update-nx-$VERSION"
+          git checkout -b "$BRANCH"
+
+          npx nx migrate "$VERSION"
+          npm install
+          npx nx migrate --run-migrations
+          git add .
+          git commit -m "build: 📦 update Nx to $VERSION"
+          git push origin "$BRANCH"
+
+      - name: Create PR
+        if: steps.check.outputs.should_update == 'true' && inputs.create_pr == true
+        env:
+          GITHUB_TOKEN: ${{ secrets.github_user_token || github.token }}
+        run: |
+          VERSION="${{ steps.nx-version.outputs.latest_version }}"
+          TITLE="build: 📦 update Nx to $VERSION"
+          BODY="Automated Nx migration from ${{ steps.nx-version.outputs.current_version }} to $VERSION"
+          gh pr create --title "$TITLE" --body "$BODY" --head "update-nx-$VERSION" --base "${{ inputs.base_branch }}" --label "${{ inputs.pr_labels }}"
