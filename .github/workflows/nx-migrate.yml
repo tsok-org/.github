@@ -364,7 +364,7 @@ jobs:
                 
               beta)
                 echo "Finding latest beta version..."
-                if [ -n "$SEARCH_MINOR" ]; then
+                if [ -n "$SEARCH_MAJOR" ] && [ -n "$SEARCH_MINOR" ]; then
                   # Specific major.minor - get latest beta
                   LATEST_VERSION=$(echo "$ALL_VERSIONS" | \
                     jq -r '.[] | select(startswith("'$SEARCH_MAJOR'.'$SEARCH_MINOR'.") and contains("-beta."))' | \
@@ -387,22 +387,22 @@ jobs:
                 else
                   # Latest beta in major version
                   LATEST_VERSION=$(echo "$ALL_VERSIONS" | \
-                    jq -r '.[] | select(startswith("'$SEARCH_MAJOR'.") and contains("-beta."))' | \
-                    tail -1)
+                    jq -r '.[] | select(contains("-beta."))' | \
+                    sort -V | tail -1)
                   
                   # If no beta found, check for RC, then stable
                   if [ -z "$LATEST_VERSION" ]; then
                     echo "No beta version found, checking for RC..."
                     LATEST_VERSION=$(echo "$ALL_VERSIONS" | \
-                      jq -r '.[] | select(startswith("'$SEARCH_MAJOR'.") and contains("-rc."))' | \
-                      tail -1)
+                      jq -r '.[] | select(contains("-rc."))' | \
+                      sort -V | tail -1)
                   fi
                   
                   if [ -z "$LATEST_VERSION" ]; then
                     echo "No RC version found, checking for stable..."
                     LATEST_VERSION=$(echo "$ALL_VERSIONS" | \
-                      jq -r '.[] | select(startswith("'$SEARCH_MAJOR'.") and (contains("-") | not))' | \
-                      tail -1)
+                      jq -r '.[] | select((contains("-") | not))' | \
+                      sort -V | tail -1)
                   fi
                 fi
                 ;;
