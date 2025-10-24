@@ -306,7 +306,7 @@ jobs:
           TITLE="${{ inputs.pr_title_template }}"
           TITLE="${TITLE//\{version\}/$VERSION}"
 
-          BODY="### Nx Workspace Migration\n\n**Version:** ${{ steps.nx-version.outputs.current_version }} → $VERSION\n\nChannel: ${{ inputs.channel }}"
+          BODY=$(printf "### Nx Workspace Migration\n\n**Version:** %s → %s\n\nChannel: %s" "${{ steps.nx-version.outputs.current_version }}" "$VERSION" "${{ inputs.channel }}")
 
           gh pr create \
             --title "$TITLE" \
@@ -314,7 +314,7 @@ jobs:
             --head "update-nx-$VERSION" \
             --base "${{ inputs.base_branch }}" \
             --label "${{ inputs.pr_labels }}"
-            
+
       - name: Enable auto-merge
         if: steps.check.outputs.should_update == 'true' && inputs.create_pr == true && inputs.pr_auto_merge == true
         env:
