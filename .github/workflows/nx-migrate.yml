@@ -14,11 +14,11 @@ on:
         type: string
         default: "github-actions[bot]"
       node_version:
-        description: "Node.js version (e.g., '20' or '20.11.0')"
+        description: "Node.js version to use (e.g., '20', '20.11.0')"
         required: false
         type: string
       node_version_file:
-        description: "Path to .node-version/.nvmrc file"
+        description: "File to read Node.js version from (e.g., .node-version)"
         required: false
         type: string
         default: ".node-version"
@@ -27,25 +27,25 @@ on:
         required: false
         type: string
       channel:
-        description: "Release channel: 'stable', 'rc', 'beta', or 'canary'"
+        description: "Nx release channel (stable, rc, beta, canary)"
         required: false
         type: string
         default: "stable"
       major_version:
-        description: "Major version (optional, for pinning)"
+        description: "Optional major version filter (e.g., '22')"
         required: false
         type: string
       minor_version:
-        description: "Minor version (optional, for pinning)"
+        description: "Optional minor version filter (e.g., '0')"
         required: false
         type: string
       branch_name_template:
-        description: "Branch name template (must include {version})"
+        description: "Branch name template, must include {version}"
         required: false
         type: string
         default: "update-nx-{version}"
       create_pr:
-        description: "Whether to create a PR"
+        description: "Whether to create a PR automatically"
         required: false
         type: boolean
         default: true
@@ -60,7 +60,7 @@ on:
         type: string
         default: "dependencies"
       pr_auto_merge:
-        description: "Enable auto-merge after checks"
+        description: "Enable PR auto-merge"
         required: false
         type: boolean
         default: true
@@ -70,7 +70,7 @@ on:
         type: string
         default: "build: 📦 update @nx/workspace to {version}"
       github_app_id:
-        description: "GitHub App ID (if using GitHub App tokens)"
+        description: "GitHub App ID (if used)"
         required: false
         type: string
     secrets:
@@ -95,8 +95,8 @@ env:
 
 jobs:
   nx-migrate:
-    runs-on: ubuntu-latest
     name: NX Workspace Migration
+    runs-on: ubuntu-latest
     outputs:
       migration_version: ${{ steps.nx-version.outputs.latest_version }}
       pr_number: ${{ steps.push-and-pr.outputs.pr_number }}
@@ -118,9 +118,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # ------------------------------
+      # 🔍 Version detection and filtering
+      # ------------------------------
       - name: Get current and latest Nx version
         id: nx-version
         run: |
+          echo "🔍 Fetching Nx versions from npm..."
           CURRENT_VERSION=$(jq -r '.devDependencies."@nx/devkit" // .devDependencies."@nx/workspace" // .devDependencies.nx' package.json)
           echo "Current version: $CURRENT_VERSION"
 
@@ -129,28 +133,36 @@ jobs:
           MINOR="${{ inputs.minor_version }}"
 
           ALL_VERSIONS=$(npm view @nx/workspace versions --json | jq -r '.[]')
-          echo "Fetched $(echo "$ALL_VERSIONS" | wc -l) versions from npm."
+
+          # ✅ Strict semver filter allowing canary/beta/rc
+          VALID_VERSIONS=$(echo "$ALL_VERSIONS" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+(-canary\.[0-9]+-[A-Za-z0-9]+)?(-beta\.[0-9]+)?(-rc\.[0-9]+)?$' || true)
+          echo "Total valid semver versions: $(echo "$VALID_VERSIONS" | wc -l)"
+
+          if [ -z "$VALID_VERSIONS" ]; then
+            echo "::error::No valid semver versions found from npm registry."
+            exit 1
+          fi
 
           filter_versions() {
             local pattern="$1"
-            echo "$ALL_VERSIONS" | grep -E "$pattern" || true
+            echo "$VALID_VERSIONS" | grep -E "$pattern" || true
           }
 
           case "$CHANNEL" in
             canary)
               echo "Channel: canary (includes canary, beta, rc, stable)"
-              MATCHED=$(filter_versions '-canary\.| -beta\.| -rc\.|^[0-9]+\.[0-9]+\.[0-9]+$')
+              MATCHED=$(filter_versions '(-canary\.| -beta\.| -rc\.|^[0-9]+\.[0-9]+\.[0-9]+$)')
               ;;
             beta)
               echo "Channel: beta (includes beta, rc, stable)"
-              MATCHED=$(filter_versions '-beta\.| -rc\.|^[0-9]+\.[0-9]+\.[0-9]+$')
+              MATCHED=$(filter_versions '(-beta\.| -rc\.|^[0-9]+\.[0-9]+\.[0-9]+$)')
               ;;
             rc)
               echo "Channel: rc (includes rc, stable)"
-              MATCHED=$(filter_versions '-rc\.|^[0-9]+\.[0-9]+\.[0-9]+$')
+              MATCHED=$(filter_versions '(-rc\.|^[0-9]+\.[0-9]+\.[0-9]+$)')
               ;;
             stable)
-              echo "Channel: stable (only stable releases)"
+              echo "Channel: stable (stable only)"
               MATCHED=$(filter_versions '^[0-9]+\.[0-9]+\.[0-9]+$')
               ;;
             *)
@@ -168,16 +180,27 @@ jobs:
           fi
 
           if [ -z "$MATCHED" ]; then
-            echo "::error::No versions matched the criteria"
+            echo "::error::No versions matched after filtering."
+            echo "Channel: $CHANNEL | Major: $MAJOR | Minor: $MINOR"
             exit 1
           fi
 
+          # Sort semantically
           LATEST_VERSION=$(echo "$MATCHED" | sort -V | tail -1)
-          echo "Latest version: $LATEST_VERSION"
 
+          # Validate
+          if ! echo "$LATEST_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-canary\.[0-9]+-[A-Za-z0-9]+)?(-beta\.[0-9]+)?(-rc\.[0-9]+)?$'; then
+            echo "::error::Invalid latest version detected: $LATEST_VERSION"
+            exit 1
+          fi
+
+          echo "✅ Latest version: $LATEST_VERSION"
           echo "current_version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
           echo "latest_version=$LATEST_VERSION" >> "$GITHUB_OUTPUT"
 
+      # ------------------------------
+      # ⚙️ Migration and PR handling
+      # ------------------------------
       - name: Check if update needed
         id: check
         run: |
@@ -189,7 +212,7 @@ jobs:
 
       - name: Exit early if up to date
         if: steps.check.outputs.should_update == 'false'
-        run: echo "Already up to date."
+        run: echo "✅ Nx workspace is already up to date."
 
       - name: Create branch and migrate
         if: steps.check.outputs.should_update == 'true'
@@ -198,6 +221,7 @@ jobs:
           BRANCH="update-nx-$VERSION"
           git checkout -b "$BRANCH"
 
+          echo "🚀 Running Nx migrate to $VERSION"
           npx nx migrate "$VERSION"
           npm install
           npx nx migrate --run-migrations
@@ -205,12 +229,20 @@ jobs:
           git commit -m "build: 📦 update Nx to $VERSION"
           git push origin "$BRANCH"
 
-      - name: Create PR
+      - name: Create Pull Request
         if: steps.check.outputs.should_update == 'true' && inputs.create_pr == true
         env:
           GITHUB_TOKEN: ${{ secrets.github_user_token || github.token }}
         run: |
           VERSION="${{ steps.nx-version.outputs.latest_version }}"
-          TITLE="build: 📦 update Nx to $VERSION"
-          BODY="Automated Nx migration from ${{ steps.nx-version.outputs.current_version }} to $VERSION"
-          gh pr create --title "$TITLE" --body "$BODY" --head "update-nx-$VERSION" --base "${{ inputs.base_branch }}" --label "${{ inputs.pr_labels }}"
+          TITLE="${{ inputs.pr_title_template }}"
+          TITLE="${TITLE//\{version\}/$VERSION}"
+
+          BODY="### Nx Workspace Migration\n\n**Version:** ${{ steps.nx-version.outputs.current_version }} → $VERSION\n\nChannel: ${{ inputs.channel }}"
+
+          gh pr create \
+            --title "$TITLE" \
+            --body "$BODY" \
+            --head "update-nx-$VERSION" \
+            --base "${{ inputs.base_branch }}" \
+            --label "${{ inputs.pr_labels }}"
