@@ -224,7 +224,14 @@ jobs:
           echo "🚀 Running Nx migrate to $VERSION"
           npx nx migrate "$VERSION"
           npm install
-          npx nx migrate --run-migrations
+
+          # Run migrations only if migrations.json exists
+          if [ -f migrations.json ]; then
+            echo "🧩 Running Nx migrations from migrations.json..."
+            npx nx migrate --run-migrations --if-exists
+          else
+            echo "ℹ️ No migrations.json found, skipping migration run."
+          fi
           git add .
           git commit -m "build: 📦 update Nx to $VERSION"
           git push origin "$BRANCH"
