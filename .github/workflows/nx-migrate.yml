@@ -104,6 +104,67 @@ jobs:
       has_changes: ${{ steps.check-changes.outputs.has_changes }}
 
     steps:
+      - name: Generate GitHub App Token
+        if: inputs.github_app_id != ''
+        uses: actions/create-github-app-token@v1
+        id: generate-token
+        with:
+          app-id: ${{ inputs.github_app_id }}
+          private-key: ${{ secrets.github_app_private_key }}
+
+      - name: Get GitHub App User ID
+        if: steps.generate-token.outputs.token != ''
+        id: get-app-user-id
+        run: |
+          echo "user-id=$(gh api "/users/${{ steps.generate-token.outputs.app-slug }}[bot]" --jq .id)" >> "$GITHUB_OUTPUT"
+        env:
+          GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
+
+      - name: Set GitHub Token
+        id: set-token
+        run: |
+          if [ -n "${{ secrets.github_user_token }}" ]; then
+            echo "token=${{ secrets.github_user_token }}" >> "$GITHUB_OUTPUT"
+            echo "is_app_token=false" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ steps.generate-token.outputs.token }}" ]; then
+            echo "token=${{ steps.generate-token.outputs.token }}" >> "$GITHUB_OUTPUT"
+            echo "is_app_token=true" >> "$GITHUB_OUTPUT"
+            echo "app_slug=${{ steps.generate-token.outputs.app-slug }}" >> "$GITHUB_OUTPUT"
+            echo "app_user_id=${{ steps.get-app-user-id.outputs.user-id }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::No GitHub token available. Provide either:"
+            echo "::error::  1) secrets.github_user_token, or"
+            echo "::error::  2) inputs.github_app_id + secrets.github_app_private_key"
+            exit 1
+          fi
+
+      - name: Setup Git User
+        run: |
+          if [ "${{ steps.set-token.outputs.is_app_token }}" = "true" ]; then
+            APP_SLUG="${{ steps.set-token.outputs.app_slug }}"
+            USER_ID="${{ steps.set-token.outputs.app_user_id }}"
+            git config --global user.name "${APP_SLUG}[bot]"
+            git config --global user.email "${USER_ID}+${APP_SLUG}[bot]@users.noreply.github.com"
+          else
+            if USER_INFO=$(gh api /user 2>/dev/null); then
+              USER_NAME=$(echo "$USER_INFO" | jq -r '.login')
+              USER_ID=$(echo "$USER_INFO" | jq -r '.id')
+              git config --global user.name "$USER_NAME"
+              git config --global user.email "${USER_ID}+${USER_NAME}@users.noreply.github.com"
+            else
+              ACTOR="${{ inputs.actor }}"
+              if [ -z "$ACTOR" ] || [ "$ACTOR" = "github-actions[bot]" ]; then
+                git config --global user.name "github-actions[bot]"
+                git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              else
+                git config --global user.name "$ACTOR"
+                git config --global user.email "${ACTOR}@users.noreply.github.com"
+              fi
+            fi
+          fi
+        env:
+          GITHUB_TOKEN: ${{ steps.set-token.outputs.token }}
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -239,7 +300,7 @@ jobs:
       - name: Create Pull Request
         if: steps.check.outputs.should_update == 'true' && inputs.create_pr == true
         env:
-          GITHUB_TOKEN: ${{ secrets.github_user_token || github.token }}
+          GITHUB_TOKEN: ${{ steps.set-token.outputs.token }}
         run: |
           VERSION="${{ steps.nx-version.outputs.latest_version }}"
           TITLE="${{ inputs.pr_title_template }}"
@@ -253,3 +314,18 @@ jobs:
             --head "update-nx-$VERSION" \
             --base "${{ inputs.base_branch }}" \
             --label "${{ inputs.pr_labels }}"
+            
+      - name: Enable auto-merge
+        if: steps.check.outputs.should_update == 'true' && inputs.create_pr == true && inputs.pr_auto_merge == true
+        env:
+          GITHUB_TOKEN: ${{ steps.set-token.outputs.token }}
+        run: |
+          # Enable auto-merge; if branch protection doesn't allow it, warn and continue
+          PR_URL=$(gh pr view --json url --jq .url || true)
+          if [ -n "$PR_URL" ]; then
+            if ! gh pr merge --auto --squash --delete-branch; then
+              echo "::warning::Failed to enable auto-merge (check branch protection / required checks / permissions)."
+            fi
+          else
+            echo "::warning::PR not found for auto-merge step."
+          fi
