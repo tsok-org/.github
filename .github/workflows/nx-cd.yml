@@ -325,9 +325,11 @@ jobs:
           fi
 
       - name: Configure npm authentication
-        if: secrets.npm_token != ''
         run: |
-          echo "//registry.npmjs.org/:_authToken=${{ secrets.npm_token }}" >> ~/.npmrc
+          if [ -n "$NPM_TOKEN" ]; then
+            echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
+            echo "✅ npm authentication configured"
+          fi
         env:
           NPM_TOKEN: ${{ secrets.npm_token }}
 
