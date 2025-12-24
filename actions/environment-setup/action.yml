@@ -207,27 +207,35 @@ runs:
         if [[ "$NODE_CONFIG" != "false" && "$NODE_CONFIG" != "null" ]] && should_setup "node"; then
           echo "setup_node=true" >> "$GITHUB_OUTPUT"
           
-          # Version
+          # Version - separate explicit version from file reference
           if [[ "$NODE_CONFIG" == "true" ]]; then
-            echo "node_version=.node-version" >> "$GITHUB_OUTPUT"
+            # Default: use .node-version file
+            echo "node_version_explicit=" >> "$GITHUB_OUTPUT"
+            echo "node_version_file=.node-version" >> "$GITHUB_OUTPUT"
           else
             NODE_VERSION=$(yq -e '.node.version // ".node-version"' "$CONFIG_FILE" 2>/dev/null || echo ".node-version")
-            echo "node_version=$NODE_VERSION" >> "$GITHUB_OUTPUT"
+            
+            # Check if version looks like a file reference (starts with . or contains /)
+            if [[ "$NODE_VERSION" == .* || "$NODE_VERSION" == */* ]]; then
+              # It's a file path
+              echo "node_version_explicit=" >> "$GITHUB_OUTPUT"
+              echo "node_version_file=$NODE_VERSION" >> "$GITHUB_OUTPUT"
+            else
+              # It's an explicit version
+              echo "node_version_explicit=$NODE_VERSION" >> "$GITHUB_OUTPUT"
+              echo "node_version_file=" >> "$GITHUB_OUTPUT"
+            fi
           fi
           
-          # Package manager
-          PKG_MGR=$(yq -e '.node.package_manager // "auto"' "$CONFIG_FILE" 2>/dev/null || echo "auto")
-          echo "node_package_manager=$PKG_MGR" >> "$GITHUB_OUTPUT"
-          
-          # Install
+          # Install dependencies
           INSTALL=$(yq -e '.node.install // true' "$CONFIG_FILE" 2>/dev/null || echo "true")
           echo "node_install=$INSTALL" >> "$GITHUB_OUTPUT"
           
-          # Cache
-          CACHE=$(yq -e '.node.cache // true' "$CONFIG_FILE" 2>/dev/null || echo "true")
-          echo "node_cache=$CACHE" >> "$GITHUB_OUTPUT"
+          # Frozen lockfile
+          FROZEN=$(yq -e '.node.frozen_lockfile // true' "$CONFIG_FILE" 2>/dev/null || echo "true")
+          echo "node_frozen_lockfile=$FROZEN" >> "$GITHUB_OUTPUT"
           
-          echo "  ✓ Node.js: version=$NODE_VERSION, pm=$PKG_MGR"
+          echo "  ✓ Node.js: version=$NODE_VERSION"
         else
           echo "setup_node=false" >> "$GITHUB_OUTPUT"
         fi
@@ -366,10 +374,10 @@ runs:
       if: steps.config.outputs.setup_node == 'true'
       uses: tsok-org/.github/actions/setup-node@main
       with:
-        node_version: ${{ steps.config.outputs.node_version }}
-        package_manager: ${{ steps.config.outputs.node_package_manager }}
-        install: ${{ steps.config.outputs.node_install }}
-        cache: ${{ steps.config.outputs.node_cache }}
+        node_version: ${{ steps.config.outputs.node_version_explicit }}
+        node_version_file: ${{ steps.config.outputs.node_version_file }}
+        install_dependencies: ${{ steps.config.outputs.node_install }}
+        frozen_lockfile: ${{ steps.config.outputs.node_frozen_lockfile }}
         working_directory: ${{ inputs.working_directory }}
 
     # ══════════════════════════════════════════════════════════════════════════
