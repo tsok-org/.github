@@ -12,8 +12,7 @@
 # │ • Independent project versioning with nx release                           │
 # │ • Automatic conventional commit analysis                                    │
 # │ • GitHub releases with auto-generated notes                                │
-# │ • npm publishing to registries                                             │
-# │ • Docker multi-arch builds and registry push                               │
+# │ • Publishes npm packages, Docker images, and other artifacts               │
 # │ • Tag and branch protection bypass with GitHub App                         │
 # └─────────────────────────────────────────────────────────────────────────────┘
 #
@@ -33,12 +32,11 @@
 # │   jobs:                                                                     │
 # │     release:                                                                │
 # │       uses: tsok-org/.github/.github/workflows/nx-cd.yml@main              │
-# │       with:                                                                 │
-# │         publish_docker: true                                                │
 # │       secrets:                                                              │
 # │         npm_token: ${{ secrets.NPM_TOKEN }}                                │
-# │         github_app_id: ${{ vars.APP_ID }}                                  │
 # │         github_app_private_key: ${{ secrets.APP_PRIVATE_KEY }}             │
+# │       with:                                                                 │
+# │         github_app_id: ${{ vars.APP_ID }}                                  │
 # │                                                                             │
 # └─────────────────────────────────────────────────────────────────────────────┘
 #
@@ -46,13 +44,15 @@
 # │ HOW IT WORKS                                                                │
 # ├─────────────────────────────────────────────────────────────────────────────┤
 # │                                                                             │
-# │   nx release --yes handles everything:                                      │
+# │   nx release --yes handles everything (configured in nx.json):             │
 # │   • Analyzes conventional commits per project                              │
 # │   • Bumps versions independently for each affected project                 │
 # │   • Generates changelogs                                                    │
 # │   • Creates git tags (one per project release)                             │
 # │   • Creates GitHub releases                                                 │
 # │   • Publishes to npm registry                                              │
+# │   • Builds and pushes Docker images                                        │
+# │   • Any other publish targets defined in nx.json                           │
 # │                                                                             │
 # └─────────────────────────────────────────────────────────────────────────────┘
 
@@ -118,47 +118,6 @@ on:
         default: false
 
       # ─────────────────────────────────────────────────────────────────────────
-      # Docker Publishing (optional, runs after nx release)
-      # ─────────────────────────────────────────────────────────────────────────
-      publish_docker:
-        description: "Build and push Docker images after release"
-        required: false
-        type: boolean
-        default: false
-
-      docker_registry:
-        description: |
-          Docker registry URL.
-          Examples: ghcr.io, docker.io, gcr.io
-        required: false
-        type: string
-        default: "ghcr.io"
-
-      docker_image_prefix:
-        description: |
-          Prefix for Docker image names.
-          Example: "myorg" results in "myorg/app-name"
-        required: false
-        type: string
-        default: ""
-
-      docker_platforms:
-        description: |
-          Docker build platforms (comma-separated).
-          Example: linux/amd64,linux/arm64
-        required: false
-        type: string
-        default: "linux/amd64"
-
-      docker_projects:
-        description: |
-          Projects to build Docker images for (comma-separated).
-          Leave empty to build for all affected projects with Dockerfiles.
-        required: false
-        type: string
-        default: ""
-
-      # ─────────────────────────────────────────────────────────────────────────
       # Git Configuration
       # ─────────────────────────────────────────────────────────────────────────
       ref:
@@ -221,7 +180,7 @@ on:
         description: "npm token for publishing packages"
         required: false
 
-      # Docker registry authentication
+      # Docker registry authentication (if nx release publishes Docker images)
       docker_username:
         description: "Docker registry username"
         required: false
@@ -314,8 +273,6 @@ jobs:
           skip: ${{ inputs.environment_skip }}
           only: ${{ inputs.environment_only }}
         env:
-          # Docker credentials for environment-setup
-          DOCKER_REGISTRY: ${{ inputs.docker_registry }}
           DOCKER_USERNAME: ${{ secrets.docker_username || github.actor }}
           DOCKER_PASSWORD: ${{ secrets.docker_password || github.token }}
 
@@ -338,12 +295,14 @@ jobs:
       # ════════════════════════════════════════════════════════════════════════
       # 🚀 NX RELEASE
       # ════════════════════════════════════════════════════════════════════════
-      # nx release --yes handles everything:
+      # nx release --yes handles everything configured in nx.json:
       # - Version bumping based on conventional commits (per project)
       # - Changelog generation
       # - Git tagging (one tag per project release)
       # - GitHub release creation
       # - npm publishing
+      # - Docker image builds and pushes
+      # - Any other configured publish targets
 
       - name: Configure npm authentication
         if: secrets.npm_token != ''
@@ -394,93 +353,8 @@ jobs:
           GITHUB_TOKEN: ${{ steps.token.outputs.token }}
           NPM_TOKEN: ${{ secrets.npm_token }}
           NODE_AUTH_TOKEN: ${{ secrets.npm_token }}
-
-      # ════════════════════════════════════════════════════════════════════════
-      # 🐳 DOCKER BUILD & PUSH (OPTIONAL)
-      # ════════════════════════════════════════════════════════════════════════
-
-      - name: Build and push Docker images
-        if: inputs.publish_docker && !inputs.dry_run && steps.release.outputs.released == 'true'
-        run: |
-          echo "🐳 Building and pushing Docker images..."
-
-          REGISTRY="${{ inputs.docker_registry }}"
-          PREFIX="${{ inputs.docker_image_prefix }}"
-          PLATFORMS="${{ inputs.docker_platforms }}"
-
-          # Determine which projects to build
-          if [ -n "${{ inputs.docker_projects }}" ]; then
-            PROJECTS="${{ inputs.docker_projects }}"
-          else
-            # Find all projects with Dockerfiles
-            PROJECTS=$(find . -name "Dockerfile" -exec dirname {} \; | xargs -I{} basename {} | sort -u | tr '\n' ',' | sed 's/,$//')
-          fi
-
-          echo "Building Docker images for: $PROJECTS"
-
-          IFS=',' read -ra PROJECT_ARRAY <<< "$PROJECTS"
-          for PROJECT in "${PROJECT_ARRAY[@]}"; do
-            PROJECT=$(echo "$PROJECT" | xargs)  # Trim whitespace
-
-            # Find Dockerfile
-            DOCKERFILE=""
-            if [ -f "apps/$PROJECT/Dockerfile" ]; then
-              DOCKERFILE="apps/$PROJECT/Dockerfile"
-              CONTEXT="."
-            elif [ -f "packages/$PROJECT/Dockerfile" ]; then
-              DOCKERFILE="packages/$PROJECT/Dockerfile"
-              CONTEXT="."
-            elif [ -f "libs/$PROJECT/Dockerfile" ]; then
-              DOCKERFILE="libs/$PROJECT/Dockerfile"
-              CONTEXT="."
-            elif [ -f "$PROJECT/Dockerfile" ]; then
-              DOCKERFILE="$PROJECT/Dockerfile"
-              CONTEXT="$PROJECT"
-            fi
-
-            if [ -z "$DOCKERFILE" ]; then
-              echo "⚠️ No Dockerfile found for $PROJECT, skipping..."
-              continue
-            fi
-
-            # Get version from project's package.json
-            VERSION=""
-            if [ -f "apps/$PROJECT/package.json" ]; then
-              VERSION=$(jq -r '.version' "apps/$PROJECT/package.json")
-            elif [ -f "packages/$PROJECT/package.json" ]; then
-              VERSION=$(jq -r '.version' "packages/$PROJECT/package.json")
-            elif [ -f "libs/$PROJECT/package.json" ]; then
-              VERSION=$(jq -r '.version' "libs/$PROJECT/package.json")
-            fi
-
-            if [ -z "$VERSION" ] || [ "$VERSION" == "null" ]; then
-              echo "⚠️ Could not determine version for $PROJECT, using 'latest'"
-              VERSION="latest"
-            fi
-
-            # Build image name
-            if [ -n "$PREFIX" ]; then
-              IMAGE_NAME="$REGISTRY/$PREFIX/$PROJECT"
-            else
-              IMAGE_NAME="$REGISTRY/${{ github.repository_owner }}/$PROJECT"
-            fi
-
-            echo "🏗️ Building $IMAGE_NAME:$VERSION"
-
-            # Build tags
-            TAGS="-t $IMAGE_NAME:$VERSION -t $IMAGE_NAME:latest"
-
-            # Build and push
-            docker buildx build \
-              --platform="$PLATFORMS" \
-              --file="$DOCKERFILE" \
-              $TAGS \
-              --push \
-              --build-arg VERSION="$VERSION" \
-              "$CONTEXT"
-
-            echo "✅ Pushed $IMAGE_NAME:$VERSION"
-          done
+          DOCKER_USERNAME: ${{ secrets.docker_username || github.actor }}
+          DOCKER_PASSWORD: ${{ secrets.docker_password || github.token }}
 
       # ════════════════════════════════════════════════════════════════════════
       # 📊 SUMMARY
@@ -501,14 +375,15 @@ jobs:
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Released | ${{ steps.release.outputs.released || 'unknown' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| First Release | ${{ inputs.first_release }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Docker Build | ${{ inputs.publish_docker }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          echo "### 📝 Notes" >> $GITHUB_STEP_SUMMARY
+          echo "### 📝 What nx release handles" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "nx release handles:" >> $GITHUB_STEP_SUMMARY
+          echo "All publishing is configured in \`nx.json\`:" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ Version bumping (per project, based on conventional commits)" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ Changelog generation" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ Git tagging" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ GitHub releases" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ npm publishing" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Docker image builds & pushes" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Any other configured targets" >> $GITHUB_STEP_SUMMARY
