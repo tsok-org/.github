@@ -283,14 +283,20 @@ on:
         type: number
         default: 30
 
-    secrets:
-      # GitHub App authentication (recommended for branch protection bypass)
+      # ─────────────────────────────────────────────────────────────────────────
+      # GitHub App Authentication
+      # ─────────────────────────────────────────────────────────────────────────
       github_app_id:
         description: |
           GitHub App ID for authentication.
           Preferred over token for branch protection bypass.
+          Note: This is an input (not secret) since App ID is not sensitive.
         required: false
+        type: string
+        default: ""
 
+    secrets:
+      # GitHub App authentication (recommended for branch protection bypass)
       github_app_private_key:
         description: "GitHub App private key (PEM format)"
         required: false
@@ -359,10 +365,10 @@ jobs:
 
       - name: Generate GitHub App Token
         id: app-token
-        if: ${{ secrets.github_app_id != '' && secrets.github_app_private_key != '' }}
+        if: inputs.github_app_id != ''
         uses: actions/create-github-app-token@v1
         with:
-          app-id: ${{ secrets.github_app_id }}
+          app-id: ${{ inputs.github_app_id }}
           private-key: ${{ secrets.github_app_private_key }}
 
       - name: Get GitHub App User ID
@@ -414,7 +420,7 @@ jobs:
         with:
           config: ${{ inputs.environment_config }}
           working_directory: ${{ inputs.working_directory }}
-          github_app_id: ${{ secrets.github_app_id }}
+          github_app_id: ${{ inputs.github_app_id }}
           github_app_private_key: ${{ secrets.github_app_private_key }}
           github_token: ${{ steps.token.outputs.token }}
           skip: ${{ inputs.environment_skip }}

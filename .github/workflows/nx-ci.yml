@@ -221,6 +221,15 @@ on:
         type: number
         default: 30
 
+      # ─────────────────────────────────────────────────────────────────────────
+      # GitHub App Authentication
+      # ─────────────────────────────────────────────────────────────────────────
+      github_app_id:
+        description: "GitHub App ID for authentication (optional)"
+        required: false
+        type: string
+        default: ""
+
     secrets:
       nx_cloud_access_token:
         description: "Nx Cloud access token for remote caching"
@@ -228,10 +237,6 @@ on:
 
       codecov_token:
         description: "Codecov token for coverage upload"
-        required: false
-
-      github_app_id:
-        description: "GitHub App ID for authentication (optional)"
         required: false
 
       github_app_private_key:
@@ -301,7 +306,7 @@ jobs:
         with:
           config: ${{ inputs.environment_config }}
           working_directory: ${{ inputs.working_directory }}
-          github_app_id: ${{ secrets.github_app_id }}
+          github_app_id: ${{ inputs.github_app_id }}
           github_app_private_key: ${{ secrets.github_app_private_key }}
           skip: ${{ inputs.environment_skip }}
           only: ${{ inputs.environment_only }}
