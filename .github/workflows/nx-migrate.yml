@@ -1,109 +1,482 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                        NX WORKSPACE MIGRATION WORKFLOW                       ║
+# ╠══════════════════════════════════════════════════════════════════════════════╣
+# ║  Automated Nx dependency updates with intelligent version selection,         ║
+# ║  automatic package manager detection, and zero-configuration PR creation.    ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ QUICK START                                                                 │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │ Create a workflow file in your repo (e.g., .github/workflows/nx-update.yml):│
+# │                                                                             │
+# │   name: NX Auto-Update                                                      │
+# │   on:                                                                       │
+# │     workflow_dispatch:                                                      │
+# │     schedule:                                                               │
+# │       - cron: "0 6 * * *"  # Daily at 6 AM UTC                             │
+# │                                                                             │
+# │   permissions:                                                              │
+# │     contents: write                                                         │
+# │     pull-requests: write                                                    │
+# │                                                                             │
+# │   jobs:                                                                     │
+# │     migrate:                                                                │
+# │       uses: tsok-org/.github/.github/workflows/nx-migrate.yml@main          │
+# │       with:                                                                 │
+# │         github_app_id: ${{ vars.GITHUB_APP_ID }}                           │
+# │       secrets:                                                              │
+# │         github_app_private_key: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}      │
+# │                                                                             │
+# └─────────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ WHAT IT DOES                                                                │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │ 1. ✅ Auto-detects your package manager (npm, pnpm, yarn, bun)              │
+# │ 2. 🔍 Checks if your Nx workspace needs updates                             │
+# │ 3. 🔄 Runs `nx migrate` to update all @nx/* packages                        │
+# │ 4. 📦 Installs dependencies using the correct package manager               │
+# │ 5. 🧩 Applies automated migrations from migrations.json                     │
+# │ 6. 🧹 Cleans up migrations.json after running (configurable)                │
+# │ 7. 🚀 Creates a pull request with detailed change information               │
+# │ 8. 🔒 Closes existing outdated migration PRs                                │
+# │ 9. 🤖 Optionally enables auto-merge (with branch protection)                │
+# └─────────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ PACKAGE MANAGER AUTO-DETECTION                                              │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │ The workflow automatically detects your package manager based on lockfiles: │
+# │                                                                             │
+# │   Lockfile           │ Package Manager │ Install Command                    │
+# │   ───────────────────┼─────────────────┼──────────────────────────────────  │
+# │   pnpm-lock.yaml     │ pnpm            │ pnpm install --frozen-lockfile     │
+# │   yarn.lock          │ yarn            │ yarn install --frozen-lockfile     │
+# │   bun.lockb/bun.lock │ bun             │ bun install --frozen-lockfile      │
+# │   package-lock.json  │ npm             │ npm ci                             │
+# │   (none)             │ npm (fallback)  │ npm install                        │
+# │                                                                             │
+# │ No configuration required - just call the workflow!                         │
+# └─────────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ AUTHENTICATION                                                              │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │ Two methods supported:                                                      │
+# │                                                                             │
+# │ 1. GitHub App (RECOMMENDED for production):                                 │
+# │    - Short-lived tokens (1 hour)                                           │
+# │    - Can bypass branch protection                                           │
+# │    - Better audit trail                                                     │
+# │    - Auto-merge friendly                                                    │
+# │                                                                             │
+# │    Required setup:                                                          │
+# │    - Create GitHub App with Contents + Pull requests permissions           │
+# │    - Add GITHUB_APP_ID as repository variable                              │
+# │    - Add GITHUB_APP_PRIVATE_KEY as repository secret                       │
+# │                                                                             │
+# │ 2. Personal Access Token / GITHUB_TOKEN:                                    │
+# │    - Simple configuration                                                   │
+# │    - Cannot bypass branch protection                                        │
+# │    - Auto-merge may be limited                                             │
+# │                                                                             │
+# │    Usage:                                                                   │
+# │      secrets:                                                               │
+# │        github_user_token: ${{ secrets.GITHUB_TOKEN }}                      │
+# └─────────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ VERSION SELECTION STRATEGIES                                                │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │                                                                             │
+# │ 1. EXPLICIT VERSION - Migrate to a specific version:                        │
+# │      with:                                                                  │
+# │        version: "22.0.0"                                                    │
+# │                                                                             │
+# │ 2. CHANNEL-BASED (recommended) - Use release channels:                      │
+# │      with:                                                                  │
+# │        channel: "stable"  # Options: stable, rc, beta, canary              │
+# │                                                                             │
+# │ 3. MAJOR/MINOR TARGETING - Lock to specific versions:                       │
+# │      with:                                                                  │
+# │        channel: "stable"                                                    │
+# │        major_version: "22"    # Stay within v22.x.x                        │
+# │        minor_version: "0"     # Stay within v22.0.x                        │
+# │                                                                             │
+# │ Channel hierarchy:                                                          │
+# │   canary  → includes canary, beta, rc, stable                              │
+# │   beta    → includes beta, rc, stable                                      │
+# │   rc      → includes rc, stable                                            │
+# │   stable  → stable releases only (X.Y.Z without suffix)                    │
+# └─────────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ DRY RUN MODE                                                                │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │ Preview what the workflow will do without making any changes:               │
+# │                                                                             │
+# │   with:                                                                     │
+# │     dry_run: true                                                           │
+# │                                                                             │
+# │ Outputs a summary showing:                                                  │
+# │   - Current and target versions                                            │
+# │   - Package manager detected                                               │
+# │   - Branch name that would be created                                      │
+# │   - Channel and filter settings                                            │
+# └─────────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ ADVANCED EXAMPLES                                                           │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │                                                                             │
+# │ Example 1: Basic daily update                                               │
+# │   jobs:                                                                     │
+# │     migrate:                                                                │
+# │       uses: tsok-org/.github/.github/workflows/nx-migrate.yml@main          │
+# │       with:                                                                 │
+# │         github_app_id: ${{ vars.GITHUB_APP_ID }}                           │
+# │       secrets:                                                              │
+# │         github_app_private_key: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}      │
+# │                                                                             │
+# │ Example 2: Pin to major version with custom branch/PR                       │
+# │   jobs:                                                                     │
+# │     migrate:                                                                │
+# │       uses: tsok-org/.github/.github/workflows/nx-migrate.yml@main          │
+# │       with:                                                                 │
+# │         github_app_id: ${{ vars.GITHUB_APP_ID }}                           │
+# │         channel: "stable"                                                   │
+# │         major_version: "22"                                                │
+# │         branch_name_template: "chore/nx-{version}"                         │
+# │         pr_title_template: "chore(deps): upgrade Nx to {version}"          │
+# │         pr_labels: "dependencies,automated"                                 │
+# │       secrets:                                                              │
+# │         github_app_private_key: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}      │
+# │                                                                             │
+# │ Example 3: RC channel without auto-merge                                    │
+# │   jobs:                                                                     │
+# │     migrate:                                                                │
+# │       uses: tsok-org/.github/.github/workflows/nx-migrate.yml@main          │
+# │       with:                                                                 │
+# │         github_app_id: ${{ vars.GITHUB_APP_ID }}                           │
+# │         channel: "rc"                                                       │
+# │         pr_auto_merge: false                                               │
+# │       secrets:                                                              │
+# │         github_app_private_key: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}      │
+# │                                                                             │
+# │ Example 4: Dry run to preview                                               │
+# │   jobs:                                                                     │
+# │     preview:                                                                │
+# │       uses: tsok-org/.github/.github/workflows/nx-migrate.yml@main          │
+# │       with:                                                                 │
+# │         dry_run: true                                                       │
+# │         github_app_id: ${{ vars.GITHUB_APP_ID }}                           │
+# │       secrets:                                                              │
+# │         github_app_private_key: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}      │
+# └─────────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ TROUBLESHOOTING                                                             │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │                                                                             │
+# │ "No GitHub token available"                                                 │
+# │   → Provide either github_app_id + github_app_private_key                  │
+# │     OR github_user_token                                                   │
+# │                                                                             │
+# │ Auto-merge not working                                                      │
+# │   → Ensure branch protection is configured with required status checks     │
+# │   → Use GitHub App authentication (GITHUB_TOKEN has limited permissions)   │
+# │                                                                             │
+# │ "Invalid version format"                                                    │
+# │   → Remove 'v' prefix: use "22.0.0" not "v22.0.0"                         │
+# │                                                                             │
+# │ Package manager not detected                                                │
+# │   → Ensure your lockfile is committed to the repository                    │
+# │   → Check that lockfile is not in .gitignore                              │
+# │                                                                             │
+# │ Migration has no changes                                                    │
+# │   → Already at target version, or migrations already applied              │
+# │   → Workflow will skip creating PR in this case                           │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
 name: NX Workspace Migration
 
 on:
   workflow_call:
+    # ══════════════════════════════════════════════════════════════════════════
+    # INPUTS - All optional with sensible defaults
+    # ══════════════════════════════════════════════════════════════════════════
     inputs:
+      # ─────────────────────────────────────────────────────────────────────────
+      # Repository Settings
+      # ─────────────────────────────────────────────────────────────────────────
       base_branch:
-        description: "Base branch to create PR against"
+        description: |
+          Base branch to create PR against.
+          This is where the migration PR will be merged into.
         required: false
         type: string
         default: "main"
+
       actor:
-        description: "GitHub actor (for PR assignment)"
+        description: |
+          GitHub actor for git operations when not using GitHub App.
+          Used for commit author attribution.
         required: false
         type: string
         default: "github-actions[bot]"
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Node.js Configuration
+      # ─────────────────────────────────────────────────────────────────────────
       node_version:
-        description: "Node.js version to use (e.g., '20', '20.11.0')"
+        description: |
+          Explicit Node.js version to use (e.g., '20', '20.11.0').
+          If set, takes precedence over node_version_file.
         required: false
         type: string
+
       node_version_file:
-        description: "File to read Node.js version from (e.g., .node-version)"
+        description: |
+          File to read Node.js version from (e.g., .node-version, .nvmrc).
+          Ignored if node_version is explicitly set.
         required: false
         type: string
         default: ".node-version"
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Version Selection
+      # ─────────────────────────────────────────────────────────────────────────
       version:
-        description: "Explicit Nx version to migrate to"
+        description: |
+          Explicit Nx version to migrate to (e.g., "22.0.0").
+          If set, bypasses channel filtering entirely.
+          Do NOT include 'v' prefix.
         required: false
         type: string
+
       channel:
-        description: "Nx release channel (stable, rc, beta, canary)"
+        description: |
+          Nx release channel for version filtering:
+            - stable: Only stable releases (X.Y.Z)
+            - rc: Release candidates + stable
+            - beta: Beta releases + rc + stable
+            - canary: All pre-releases + stable
         required: false
         type: string
         default: "stable"
+
       major_version:
-        description: "Optional major version filter (e.g., '22')"
+        description: |
+          Filter to specific major version (e.g., "22").
+          Use to stay within a major version series.
+          Can combine with channel and minor_version.
         required: false
         type: string
+
       minor_version:
-        description: "Optional minor version filter (e.g., '0')"
+        description: |
+          Filter to specific minor version (e.g., "0" for 22.0.x).
+          Requires major_version to also be set.
         required: false
         type: string
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Branch & Commit Configuration
+      # ─────────────────────────────────────────────────────────────────────────
       branch_name_template:
-        description: "Branch name template, must include {version}"
+        description: |
+          Template for the migration branch name.
+          Supports placeholder: {version}
+          Example: "chore/nx-{version}" → "chore/nx-22.0.0"
         required: false
         type: string
         default: "update-nx-{version}"
-      create_pr:
-        description: "Whether to create a PR automatically"
-        required: false
-        type: boolean
-        default: true
-      pr_title_template:
-        description: "PR title template"
-        required: false
-        type: string
-        default: "build: 📦 update Nx to {version}"
-      pr_labels:
-        description: "Comma-separated PR labels"
-        required: false
-        type: string
-        default: "dependencies"
-      pr_auto_merge:
-        description: "Enable PR auto-merge"
-        required: false
-        type: boolean
-        default: true
+
       commit_message_template:
-        description: "Commit message template"
+        description: |
+          Template for the commit message.
+          Supports placeholder: {version}
+          Example: "chore(deps): update Nx to {version}"
         required: false
         type: string
         default: "build: 📦 update @nx/workspace to {version}"
-      github_app_id:
-        description: "GitHub App ID (if used)"
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Pull Request Configuration
+      # ─────────────────────────────────────────────────────────────────────────
+      create_pr:
+        description: |
+          Whether to create a PR automatically.
+          Set to false if you only want to create the branch.
+        required: false
+        type: boolean
+        default: true
+
+      pr_title_template:
+        description: |
+          Template for the PR title.
+          Supports placeholders: {version}, {current_version}
         required: false
         type: string
+        default: "build: 📦 update Nx to {version}"
+
+      pr_body_template:
+        description: |
+          Custom PR body template. If empty, uses default body.
+          Supports placeholders:
+            - {version}: Target Nx version
+            - {current_version}: Current Nx version
+            - {channel}: Release channel used
+            - {package_manager}: Detected package manager
+        required: false
+        type: string
+        default: ""
+
+      pr_labels:
+        description: |
+          Comma-separated list of labels to add to the PR.
+          Example: "dependencies,automated,nx-migration"
+        required: false
+        type: string
+        default: "dependencies"
+
+      pr_auto_merge:
+        description: |
+          Enable auto-merge for the PR (requires branch protection).
+          Uses squash merge strategy.
+          Requires GitHub App or PAT with appropriate permissions.
+        required: false
+        type: boolean
+        default: true
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Behavior Options
+      # ─────────────────────────────────────────────────────────────────────────
+      dry_run:
+        description: |
+          Preview mode - shows what would happen without making changes.
+          No branches created, no PRs opened, no code modified.
+          Useful for testing configuration.
+        required: false
+        type: boolean
+        default: false
+
+      cleanup_migrations:
+        description: |
+          Remove migrations.json after running migrations.
+          Keeps repository clean after migration is applied.
+        required: false
+        type: boolean
+        default: true
+
+      close_existing_prs:
+        description: |
+          Close existing Nx migration PRs when creating a new one.
+          Prevents accumulation of outdated migration PRs.
+          Deletes the associated branches as well.
+        required: false
+        type: boolean
+        default: true
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Authentication
+      # ─────────────────────────────────────────────────────────────────────────
+      github_app_id:
+        description: |
+          GitHub App ID for authentication.
+          Required if using GitHub App authentication (recommended).
+          Store as repository variable: vars.GITHUB_APP_ID
+        required: false
+        type: string
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECRETS
+    # ══════════════════════════════════════════════════════════════════════════
     secrets:
       github_user_token:
+        description: |
+          Personal Access Token for GitHub API.
+          Alternative to GitHub App authentication.
+          Can also use secrets.GITHUB_TOKEN (with limitations).
         required: false
+
       github_app_private_key:
+        description: |
+          GitHub App private key (PEM format).
+          Required if using GitHub App authentication.
+          Store as repository secret: secrets.GITHUB_APP_PRIVATE_KEY
         required: false
+
       nx_cloud_access_token:
+        description: |
+          Nx Cloud access token for distributed caching.
+          Optional - only needed if using Nx Cloud.
         required: false
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # OUTPUTS - Available to calling workflows
+    # ══════════════════════════════════════════════════════════════════════════
     outputs:
       migration_version:
+        description: "The Nx version that was migrated to"
         value: ${{ jobs.nx-migrate.outputs.migration_version }}
+
+      current_version:
+        description: "The Nx version before migration"
+        value: ${{ jobs.nx-migrate.outputs.current_version }}
+
       pr_number:
+        description: "The PR number if one was created"
         value: ${{ jobs.nx-migrate.outputs.pr_number }}
+
       pr_url:
+        description: "The PR URL if one was created"
         value: ${{ jobs.nx-migrate.outputs.pr_url }}
+
       has_changes:
+        description: "Whether the migration produced any changes"
         value: ${{ jobs.nx-migrate.outputs.has_changes }}
 
+      package_manager:
+        description: "The detected package manager (npm, pnpm, yarn, bun)"
+        value: ${{ jobs.nx-migrate.outputs.package_manager }}
+
+      branch_name:
+        description: "The name of the created branch"
+        value: ${{ jobs.nx-migrate.outputs.branch_name }}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ENVIRONMENT VARIABLES
+# ══════════════════════════════════════════════════════════════════════════════
 env:
   NX_CLOUD_ACCESS_TOKEN: ${{ secrets.nx_cloud_access_token }}
 
+# ══════════════════════════════════════════════════════════════════════════════
+# JOBS
+# ══════════════════════════════════════════════════════════════════════════════
 jobs:
   nx-migrate:
     name: NX Workspace Migration
     runs-on: ubuntu-latest
     outputs:
       migration_version: ${{ steps.nx-version.outputs.latest_version }}
-      pr_number: ${{ steps.push-and-pr.outputs.pr_number }}
-      pr_url: ${{ steps.push-and-pr.outputs.pr_url }}
-      has_changes: ${{ steps.check-changes.outputs.has_changes }}
+      current_version: ${{ steps.nx-version.outputs.current_version }}
+      pr_number: ${{ steps.create-pr.outputs.pr_number }}
+      pr_url: ${{ steps.create-pr.outputs.pr_url }}
+      has_changes: ${{ steps.check.outputs.should_update }}
+      package_manager: ${{ steps.detect-pm.outputs.manager }}
+      branch_name: ${{ steps.branch-name.outputs.branch }}
 
     steps:
+      # ════════════════════════════════════════════════════════════════════════
+      # 🔐 AUTHENTICATION
+      # ════════════════════════════════════════════════════════════════════════
+      # Supports two authentication methods:
+      # 1. GitHub App (recommended) - provides short-lived tokens
+      # 2. Personal Access Token - simpler but with limitations
+      # ════════════════════════════════════════════════════════════════════════
+
       - name: Generate GitHub App Token
         if: inputs.github_app_id != ''
         uses: actions/create-github-app-token@v1
@@ -165,37 +538,150 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ steps.set-token.outputs.token }}
 
+      # ════════════════════════════════════════════════════════════════════════
+      # 📥 CHECKOUT
+      # ════════════════════════════════════════════════════════════════════════
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # ════════════════════════════════════════════════════════════════════════
+      # 📦 PACKAGE MANAGER DETECTION
+      # ════════════════════════════════════════════════════════════════════════
+      # Auto-detects package manager based on lockfiles:
+      #   pnpm-lock.yaml     → pnpm
+      #   yarn.lock          → yarn
+      #   bun.lockb/bun.lock → bun
+      #   package-lock.json  → npm
+      #   (none)             → npm (fallback)
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Detect package manager
+        id: detect-pm
+        run: |
+          echo "🔍 Detecting package manager..."
+
+          if [ -f "pnpm-lock.yaml" ]; then
+            PM="pnpm"
+            INSTALL_FROZEN="pnpm install --frozen-lockfile"
+            INSTALL="pnpm install"
+            EXEC="pnpm exec"
+            DLX="pnpm dlx"
+            LOCKFILE="pnpm-lock.yaml"
+          elif [ -f "yarn.lock" ]; then
+            PM="yarn"
+            INSTALL_FROZEN="yarn install --frozen-lockfile"
+            INSTALL="yarn install"
+            EXEC="yarn"
+            DLX="yarn dlx"
+            LOCKFILE="yarn.lock"
+          elif [ -f "bun.lockb" ] || [ -f "bun.lock" ]; then
+            PM="bun"
+            INSTALL_FROZEN="bun install --frozen-lockfile"
+            INSTALL="bun install"
+            EXEC="bun run"
+            DLX="bunx"
+            LOCKFILE="bun.lockb"
+            [ -f "bun.lock" ] && LOCKFILE="bun.lock"
+          elif [ -f "package-lock.json" ]; then
+            PM="npm"
+            INSTALL_FROZEN="npm ci"
+            INSTALL="npm install"
+            EXEC="npx"
+            DLX="npx"
+            LOCKFILE="package-lock.json"
+          else
+            PM="npm"
+            INSTALL_FROZEN="npm install"
+            INSTALL="npm install"
+            EXEC="npx"
+            DLX="npx"
+            LOCKFILE=""
+            echo "::warning::No lockfile found, falling back to npm install"
+          fi
+
+          echo "manager=$PM" >> "$GITHUB_OUTPUT"
+          echo "install_frozen=$INSTALL_FROZEN" >> "$GITHUB_OUTPUT"
+          echo "install=$INSTALL" >> "$GITHUB_OUTPUT"
+          echo "exec=$EXEC" >> "$GITHUB_OUTPUT"
+          echo "dlx=$DLX" >> "$GITHUB_OUTPUT"
+          echo "lockfile=$LOCKFILE" >> "$GITHUB_OUTPUT"
+
+          echo "📦 Package Manager: $PM"
+          echo "📥 Install (frozen): $INSTALL_FROZEN"
+          echo "📥 Install: $INSTALL"
+          echo "🔧 Exec Command: $EXEC"
+          echo "🚀 DLX Command: $DLX"
+          if [ -n "$LOCKFILE" ]; then
+            echo "🔒 Lockfile: $LOCKFILE"
+          fi
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 🛠️ SETUP RUNTIME ENVIRONMENT
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Setup pnpm
+        if: steps.detect-pm.outputs.manager == 'pnpm'
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Bun
+        if: steps.detect-pm.outputs.manager == 'bun'
+        uses: oven-sh/setup-bun@v2
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version-file: ${{ inputs.node_version_file }}
-          cache: npm
+          node-version: ${{ inputs.node_version }}
+          node-version-file: ${{ inputs.node_version && '' || inputs.node_version_file }}
+          cache: ${{ steps.detect-pm.outputs.manager }}
 
       - name: Install dependencies
-        run: npm ci
+        run: ${{ steps.detect-pm.outputs.install_frozen }}
 
-      # ------------------------------
-      # 🔍 Version detection and filtering
-      # ------------------------------
+      # ════════════════════════════════════════════════════════════════════════
+      # 🔍 VERSION DETECTION AND FILTERING
+      # ════════════════════════════════════════════════════════════════════════
+      # Determines current Nx version and finds the latest available version
+      # based on channel filtering (stable, rc, beta, canary) and optional
+      # major/minor version constraints.
+      # ════════════════════════════════════════════════════════════════════════
+
       - name: Get current and latest Nx version
         id: nx-version
         run: |
           echo "🔍 Fetching Nx versions from npm..."
-          CURRENT_VERSION=$(jq -r '.devDependencies."@nx/devkit" // .devDependencies."@nx/workspace" // .devDependencies.nx' package.json)
-          echo "Current version: $CURRENT_VERSION"
+
+          # Get current version from package.json (checks multiple possible locations)
+          CURRENT_VERSION=$(jq -r '.devDependencies."@nx/devkit" // .devDependencies."@nx/workspace" // .devDependencies.nx // empty' package.json)
+
+          if [ -z "$CURRENT_VERSION" ]; then
+            echo "::error::Could not detect current Nx version. Ensure @nx/devkit, @nx/workspace, or nx is in devDependencies."
+            exit 1
+          fi
+
+          echo "📌 Current version: $CURRENT_VERSION"
+
+          # Use explicit version if provided (bypasses all filtering)
+          if [ -n "${{ inputs.version }}" ]; then
+            LATEST_VERSION="${{ inputs.version }}"
+            echo "📌 Using explicit version: $LATEST_VERSION"
+            echo "current_version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+            echo "latest_version=$LATEST_VERSION" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           CHANNEL="${{ inputs.channel }}"
           MAJOR="${{ inputs.major_version }}"
           MINOR="${{ inputs.minor_version }}"
 
+          # Fetch all versions from npm registry
           ALL_VERSIONS=$(npm view @nx/workspace versions --json | jq -r '.[]')
 
-          # ✅ Strict semver filter allowing canary/beta/rc
+          # Strict semver filter allowing canary/beta/rc suffixes
           VALID_VERSIONS=$(echo "$ALL_VERSIONS" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+(-canary\.[0-9]+-[A-Za-z0-9]+)?(-beta\.[0-9]+)?(-rc\.[0-9]+)?$' || true)
           echo "Total valid semver versions: $(echo "$VALID_VERSIONS" | wc -l)"
 
@@ -204,52 +690,62 @@ jobs:
             exit 1
           fi
 
+          # Helper function to filter versions by pattern
           filter_versions() {
             local pattern="$1"
             echo "$VALID_VERSIONS" | grep -E "$pattern" || true
           }
 
+          # Apply channel filter
           case "$CHANNEL" in
             canary)
-              echo "Channel: canary (includes canary, beta, rc, stable)"
-              MATCHED=$(filter_versions '(-canary\.| -beta\.| -rc\.|^[0-9]+\.[0-9]+\.[0-9]+$)')
+              echo "📡 Channel: canary (includes canary, beta, rc, stable)"
+              MATCHED=$(filter_versions '(-canary\.|-beta\.|-rc\.|^[0-9]+\.[0-9]+\.[0-9]+$)')
               ;;
             beta)
-              echo "Channel: beta (includes beta, rc, stable)"
-              MATCHED=$(filter_versions '(-beta\.| -rc\.|^[0-9]+\.[0-9]+\.[0-9]+$)')
+              echo "📡 Channel: beta (includes beta, rc, stable)"
+              MATCHED=$(filter_versions '(-beta\.|-rc\.|^[0-9]+\.[0-9]+\.[0-9]+$)')
               ;;
             rc)
-              echo "Channel: rc (includes rc, stable)"
+              echo "📡 Channel: rc (includes rc, stable)"
               MATCHED=$(filter_versions '(-rc\.|^[0-9]+\.[0-9]+\.[0-9]+$)')
               ;;
             stable)
-              echo "Channel: stable (stable only)"
+              echo "📡 Channel: stable (stable only)"
               MATCHED=$(filter_versions '^[0-9]+\.[0-9]+\.[0-9]+$')
               ;;
             *)
-              echo "::error::Invalid channel: $CHANNEL"
+              echo "::error::Invalid channel: $CHANNEL. Must be one of: stable, rc, beta, canary"
               exit 1
               ;;
           esac
 
+          # Apply major version filter
           if [ -n "$MAJOR" ]; then
+            echo "🔢 Filtering to major version: $MAJOR"
             MATCHED=$(echo "$MATCHED" | grep "^$MAJOR\." || true)
           fi
 
+          # Apply minor version filter (requires major to be set)
           if [ -n "$MINOR" ]; then
+            if [ -z "$MAJOR" ]; then
+              echo "::error::minor_version requires major_version to be set"
+              exit 1
+            fi
+            echo "🔢 Filtering to minor version: $MAJOR.$MINOR"
             MATCHED=$(echo "$MATCHED" | grep "^$MAJOR\.$MINOR\." || true)
           fi
 
           if [ -z "$MATCHED" ]; then
             echo "::error::No versions matched after filtering."
-            echo "Channel: $CHANNEL | Major: $MAJOR | Minor: $MINOR"
+            echo "::error::Channel: $CHANNEL | Major: ${MAJOR:-any} | Minor: ${MINOR:-any}"
             exit 1
           fi
 
-          # Sort semantically
+          # Sort semantically and get latest
           LATEST_VERSION=$(echo "$MATCHED" | sort -V | tail -1)
 
-          # Validate
+          # Validate version format
           if ! echo "$LATEST_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-canary\.[0-9]+-[A-Za-z0-9]+)?(-beta\.[0-9]+)?(-rc\.[0-9]+)?$'; then
             echo "::error::Invalid latest version detected: $LATEST_VERSION"
             exit 1
@@ -259,73 +755,271 @@ jobs:
           echo "current_version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
           echo "latest_version=$LATEST_VERSION" >> "$GITHUB_OUTPUT"
 
-      # ------------------------------
-      # ⚙️ Migration and PR handling
-      # ------------------------------
+      # ════════════════════════════════════════════════════════════════════════
+      # 🔄 UPDATE CHECK
+      # ════════════════════════════════════════════════════════════════════════
+
       - name: Check if update needed
         id: check
         run: |
-          if [ "${{ steps.nx-version.outputs.current_version }}" != "${{ steps.nx-version.outputs.latest_version }}" ]; then
-            echo "should_update=true" >> "$GITHUB_OUTPUT"
-          else
+          CURRENT="${{ steps.nx-version.outputs.current_version }}"
+          LATEST="${{ steps.nx-version.outputs.latest_version }}"
+
+          if [ "$CURRENT" = "$LATEST" ]; then
+            echo "✅ Nx workspace is already up to date at version $CURRENT"
             echo "should_update=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "🔄 Update available: $CURRENT → $LATEST"
+            echo "should_update=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Exit early if up to date
-        if: steps.check.outputs.should_update == 'false'
-        run: echo "✅ Nx workspace is already up to date."
-
-      - name: Create branch and migrate
+      - name: Generate branch name
+        id: branch-name
         if: steps.check.outputs.should_update == 'true'
         run: |
           VERSION="${{ steps.nx-version.outputs.latest_version }}"
-          BRANCH="update-nx-$VERSION"
+          TEMPLATE="${{ inputs.branch_name_template }}"
+          BRANCH="${TEMPLATE//\{version\}/$VERSION}"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "📝 Branch name: $BRANCH"
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 👀 DRY RUN SUMMARY
+      # ════════════════════════════════════════════════════════════════════════
+      # When dry_run is enabled, shows what would happen without making changes.
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Dry run summary
+        if: steps.check.outputs.should_update == 'true' && inputs.dry_run == true
+        run: |
+          echo "🔍 DRY RUN - No changes will be made"
+          echo ""
+          echo "📋 Migration Summary:"
+          echo "  Current Version: ${{ steps.nx-version.outputs.current_version }}"
+          echo "  Target Version:  ${{ steps.nx-version.outputs.latest_version }}"
+          echo "  Package Manager: ${{ steps.detect-pm.outputs.manager }}"
+          echo "  Branch Name:     ${{ steps.branch-name.outputs.branch }}"
+          echo "  Channel:         ${{ inputs.channel }}"
+          echo "  Create PR:       ${{ inputs.create_pr }}"
+          echo "  Auto-merge:      ${{ inputs.pr_auto_merge }}"
+          echo ""
+          echo "To perform the actual migration, run without dry_run: true"
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 🧹 CLOSE EXISTING PRs
+      # ════════════════════════════════════════════════════════════════════════
+      # Closes any existing migration PRs to prevent accumulation of outdated PRs.
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Close existing Nx migration PRs
+        if: steps.check.outputs.should_update == 'true' && inputs.dry_run == false && inputs.close_existing_prs == true
+        env:
+          GITHUB_TOKEN: ${{ steps.set-token.outputs.token }}
+        run: |
+          echo "🔍 Checking for existing Nx migration PRs..."
+
+          # Find open PRs with branches matching the template pattern
+          TEMPLATE="${{ inputs.branch_name_template }}"
+          PATTERN="${TEMPLATE//\{version\}/[0-9]+\\.[0-9]+\\.[0-9]+.*}"
+
+          # List open PRs and filter by branch pattern
+          EXISTING_PRS=$(gh pr list --state open --json number,headRefName --jq ".[] | select(.headRefName | test(\"$PATTERN\")) | .number" 2>/dev/null || true)
+
+          if [ -n "$EXISTING_PRS" ]; then
+            echo "📋 Found existing migration PRs: $EXISTING_PRS"
+            for PR_NUM in $EXISTING_PRS; do
+              echo "🔒 Closing PR #$PR_NUM (superseded by new migration)"
+              gh pr close "$PR_NUM" --comment "Closing: superseded by migration to ${{ steps.nx-version.outputs.latest_version }}" --delete-branch || true
+            done
+          else
+            echo "✅ No existing migration PRs found"
+          fi
+
+      # ════════════════════════════════════════════════════════════════════════
+      # ⚙️ RUN MIGRATION
+      # ════════════════════════════════════════════════════════════════════════
+      # Creates branch, runs nx migrate, installs deps, applies migrations,
+      # cleans up, commits, and pushes.
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Create branch and migrate
+        id: migrate
+        if: steps.check.outputs.should_update == 'true' && inputs.dry_run == false
+        run: |
+          VERSION="${{ steps.nx-version.outputs.latest_version }}"
+          BRANCH="${{ steps.branch-name.outputs.branch }}"
+          PM="${{ steps.detect-pm.outputs.manager }}"
+          EXEC="${{ steps.detect-pm.outputs.exec }}"
+          DLX="${{ steps.detect-pm.outputs.dlx }}"
+          INSTALL="${{ steps.detect-pm.outputs.install }}"
+
+          echo "🌿 Creating branch: $BRANCH"
           git checkout -b "$BRANCH"
 
-          echo "🚀 Running Nx migrate to $VERSION"
-          npx nx migrate "$VERSION"
-          npm install
+          echo "🚀 Running Nx migrate to $VERSION using $PM"
+          $DLX nx migrate "$VERSION"
+
+          echo "📦 Installing updated dependencies with $PM"
+          $INSTALL
 
           # Run migrations only if migrations.json exists
+          MIGRATIONS_RAN="false"
           if [ -f migrations.json ]; then
             echo "🧩 Running Nx migrations from migrations.json..."
-            npx nx migrate --run-migrations --if-exists
+            $EXEC nx migrate --run-migrations --if-exists
+            MIGRATIONS_RAN="true"
+
+            # Cleanup migrations.json if configured
+            if [ "${{ inputs.cleanup_migrations }}" = "true" ]; then
+              echo "🧹 Removing migrations.json"
+              rm -f migrations.json
+            fi
           else
             echo "ℹ️ No migrations.json found, skipping migration run."
           fi
+
+          echo "migrations_ran=$MIGRATIONS_RAN" >> "$GITHUB_OUTPUT"
+
+          # Prepare commit message
+          COMMIT_MSG="${{ inputs.commit_message_template }}"
+          COMMIT_MSG="${COMMIT_MSG//\{version\}/$VERSION}"
+
+          echo "📝 Committing changes..."
           git add .
-          git commit -m "build: 📦 update Nx to $VERSION"
-          git push origin "$BRANCH"
+
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "⚠️ No changes to commit after migration"
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "$COMMIT_MSG"
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+
+            echo "📤 Pushing branch to origin..."
+            git push origin "$BRANCH" --force
+          fi
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 📝 CREATE PULL REQUEST
+      # ════════════════════════════════════════════════════════════════════════
 
       - name: Create Pull Request
-        if: steps.check.outputs.should_update == 'true' && inputs.create_pr == true
+        id: create-pr
+        if: steps.check.outputs.should_update == 'true' && inputs.dry_run == false && inputs.create_pr == true && steps.migrate.outputs.has_changes == 'true'
         env:
           GITHUB_TOKEN: ${{ steps.set-token.outputs.token }}
         run: |
           VERSION="${{ steps.nx-version.outputs.latest_version }}"
+          CURRENT="${{ steps.nx-version.outputs.current_version }}"
+          BRANCH="${{ steps.branch-name.outputs.branch }}"
+          PM="${{ steps.detect-pm.outputs.manager }}"
+          CHANNEL="${{ inputs.channel }}"
+          MIGRATIONS_RAN="${{ steps.migrate.outputs.migrations_ran }}"
+
+          # Prepare title with placeholder substitution
           TITLE="${{ inputs.pr_title_template }}"
           TITLE="${TITLE//\{version\}/$VERSION}"
+          TITLE="${TITLE//\{current_version\}/$CURRENT}"
 
-          BODY=$(printf "### Nx Workspace Migration\n\n**Version:** %s → %s\n\nChannel: %s" "${{ steps.nx-version.outputs.current_version }}" "$VERSION" "${{ inputs.channel }}")
+          # Prepare body - use custom template or default
+          CUSTOM_BODY="${{ inputs.pr_body_template }}"
+          if [ -n "$CUSTOM_BODY" ]; then
+            BODY="$CUSTOM_BODY"
+          else
+            # Build default body using heredoc for proper multiline handling
+            BODY=$(cat << EOFBODY
+          ## 🔄 Nx Workspace Migration
 
-          gh pr create \
+          ### Version Update
+          | From | To |
+          |------|-----|
+          | \`${CURRENT}\` | \`${VERSION}\` |
+
+          ### Details
+          - **Channel:** ${CHANNEL}
+          - **Package Manager:** ${PM}
+          - **Migrations Applied:** ${MIGRATIONS_RAN}
+
+          ### Checklist
+          - [ ] CI passes
+          - [ ] Manual testing (if needed)
+
+          ---
+          *This PR was automatically created by the [NX Migration Workflow](https://github.com/tsok-org/.github)*
+          EOFBODY
+          )
+          fi
+
+          # Replace placeholders in custom body
+          BODY="${BODY//\{version\}/$VERSION}"
+          BODY="${BODY//\{current_version\}/$CURRENT}"
+          BODY="${BODY//\{channel\}/$CHANNEL}"
+          BODY="${BODY//\{package_manager\}/$PM}"
+
+          echo "📝 Creating Pull Request..."
+          PR_URL=$(gh pr create \
             --title "$TITLE" \
             --body "$BODY" \
-            --head "update-nx-$VERSION" \
+            --head "$BRANCH" \
             --base "${{ inputs.base_branch }}" \
-            --label "${{ inputs.pr_labels }}"
+            --label "${{ inputs.pr_labels }}")
+
+          PR_NUMBER=$(gh pr view "$BRANCH" --json number --jq .number)
+
+          echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+
+          echo "✅ Created PR #$PR_NUMBER: $PR_URL"
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 🔀 ENABLE AUTO-MERGE
+      # ════════════════════════════════════════════════════════════════════════
 
       - name: Enable auto-merge
-        if: steps.check.outputs.should_update == 'true' && inputs.create_pr == true && inputs.pr_auto_merge == true
+        if: steps.check.outputs.should_update == 'true' && inputs.dry_run == false && inputs.create_pr == true && inputs.pr_auto_merge == true && steps.migrate.outputs.has_changes == 'true'
         env:
           GITHUB_TOKEN: ${{ steps.set-token.outputs.token }}
         run: |
-          # Enable auto-merge; if branch protection doesn't allow it, warn and continue
-          PR_URL=$(gh pr view --json url --jq .url || true)
-          if [ -n "$PR_URL" ]; then
-            if ! gh pr merge --auto --squash --delete-branch; then
-              echo "::warning::Failed to enable auto-merge (check branch protection / required checks / permissions)."
+          BRANCH="${{ steps.branch-name.outputs.branch }}"
+
+          echo "🔀 Enabling auto-merge for PR..."
+          if gh pr merge "$BRANCH" --auto --squash --delete-branch; then
+            echo "✅ Auto-merge enabled successfully"
+          else
+            echo "::warning::Failed to enable auto-merge. This may be due to:"
+            echo "::warning::  - Branch protection rules not configured"
+            echo "::warning::  - Required status checks not defined"
+            echo "::warning::  - Insufficient permissions"
+            echo "::warning::The PR has been created but will need manual merging."
+          fi
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 📊 JOB SUMMARY
+      # ════════════════════════════════════════════════════════════════════════
+      # Generates a summary visible in the GitHub Actions UI.
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Job Summary
+        if: always()
+        run: |
+          echo "## 🔄 Nx Migration Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.check.outputs.should_update }}" = "true" ]; then
+            echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Current Version | \`${{ steps.nx-version.outputs.current_version }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Target Version | \`${{ steps.nx-version.outputs.latest_version }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Package Manager | ${{ steps.detect-pm.outputs.manager }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Channel | ${{ inputs.channel }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Dry Run | ${{ inputs.dry_run }} |" >> $GITHUB_STEP_SUMMARY
+
+            if [ "${{ inputs.dry_run }}" = "false" ]; then
+              echo "| Branch | \`${{ steps.branch-name.outputs.branch }}\` |" >> $GITHUB_STEP_SUMMARY
+              if [ -n "${{ steps.create-pr.outputs.pr_url }}" ]; then
+                echo "| PR | [#${{ steps.create-pr.outputs.pr_number }}](${{ steps.create-pr.outputs.pr_url }}) |" >> $GITHUB_STEP_SUMMARY
+              fi
             fi
           else
-            echo "::warning::PR not found for auto-merge step."
+            echo "✅ **No update needed** - Workspace is already at version \`${{ steps.nx-version.outputs.current_version }}\`" >> $GITHUB_STEP_SUMMARY
           fi
