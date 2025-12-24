@@ -301,13 +301,6 @@ on:
         description: "GitHub App private key (PEM format)"
         required: false
 
-      # Fallback token
-      github_token:
-        description: |
-          GitHub token (fallback if no App credentials).
-          Cannot bypass branch protection rules.
-        required: false
-
       # npm authentication
       npm_token:
         description: "npm token for publishing packages"
@@ -385,9 +378,6 @@ jobs:
           if [[ -n "${{ steps.app-token.outputs.token }}" ]]; then
             echo "token=${{ steps.app-token.outputs.token }}" >> "$GITHUB_OUTPUT"
             echo "🔐 Using GitHub App token"
-          elif [[ -n "${{ secrets.github_token }}" ]]; then
-            echo "token=${{ secrets.github_token }}" >> "$GITHUB_OUTPUT"
-            echo "🔑 Using provided GitHub token"
           else
             echo "token=${{ github.token }}" >> "$GITHUB_OUTPUT"
             echo "🔑 Using default GitHub token"
