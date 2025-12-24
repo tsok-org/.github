@@ -1,0 +1,578 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                         ENVIRONMENT SETUP ACTION                             ║
+# ╠══════════════════════════════════════════════════════════════════════════════╣
+# ║  Universal environment setup from .environment.yml                           ║
+# ║  Handles runtimes, tools, and services declaratively.                        ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ FEATURES                                                                    │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │ • Declarative configuration via .environment.yml                           │
+# │ • GitHub App or token authentication                                       │
+# │ • Automatic runtime detection (Node.js, Python, etc.)                      │
+# │ • Infrastructure tools (Terraform, Terragrunt, Docker)                     │
+# │ • Service containers (Postgres, Redis, NATS, etc.)                         │
+# │ • Credentials from environment variables (DOCKER_*, POSTGRES_*, etc.)      │
+# └─────────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ USAGE                                                                       │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │                                                                             │
+# │   - name: Setup Environment                                                 │
+# │     uses: tsok-org/.github/actions/environment-setup@main                  │
+# │     with:                                                                   │
+# │       github_app_id: ${{ vars.APP_ID }}                                    │
+# │       github_app_private_key: ${{ secrets.APP_PRIVATE_KEY }}               │
+# │                                                                             │
+# │   # Or with token:                                                          │
+# │   - name: Setup Environment                                                 │
+# │     uses: tsok-org/.github/actions/environment-setup@main                  │
+# │     with:                                                                   │
+# │       github_token: ${{ secrets.GITHUB_TOKEN }}                            │
+# │       skip: services,docker                                                │
+# │                                                                             │
+# └─────────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ ENVIRONMENT VARIABLES                                                       │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │ Credentials should be passed as environment variables in the workflow:      │
+# │                                                                             │
+# │   DOCKER_REGISTRY    - Docker registry URL (ghcr.io, docker.io)            │
+# │   DOCKER_USERNAME    - Registry username                                   │
+# │   DOCKER_PASSWORD    - Registry password/token                             │
+# │   POSTGRES_USER      - PostgreSQL user                                     │
+# │   POSTGRES_PASSWORD  - PostgreSQL password                                 │
+# │   POSTGRES_DB        - PostgreSQL database name                            │
+# │   REDIS_PASSWORD     - Redis password (optional)                           │
+# │   NPM_TOKEN          - npm registry token                                  │
+# │   GOOGLE_CREDENTIALS - GCP service account JSON                            │
+# │                                                                             │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
+name: Environment Setup
+description: |
+  Universal environment setup from .environment.yml configuration.
+  Supports runtimes (Node.js, Python), tools (Terraform, Docker), and services.
+
+inputs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Configuration
+  # ─────────────────────────────────────────────────────────────────────────────
+  config:
+    description: Path to environment configuration file
+    default: ".environment.yml"
+
+  working_directory:
+    description: Working directory for setup operations
+    default: "."
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # GitHub Authentication
+  # ─────────────────────────────────────────────────────────────────────────────
+  github_app_id:
+    description: |
+      GitHub App ID for authentication.
+      Preferred over token for branch protection bypass.
+    required: false
+
+  github_app_private_key:
+    description: GitHub App private key (PEM format)
+    required: false
+
+  github_token:
+    description: |
+      GitHub token (fallback if no App credentials).
+      Used for registry auth and API calls.
+    default: ${{ github.token }}
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Component Selection
+  # ─────────────────────────────────────────────────────────────────────────────
+  skip:
+    description: |
+      Components to skip (comma-separated).
+      Options: node, python, terraform, docker, services
+      Example: "services,docker"
+    default: ""
+
+  only:
+    description: |
+      Only setup these components (comma-separated).
+      If set, only listed components are configured.
+      Example: "node" or "node,terraform"
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    # ══════════════════════════════════════════════════════════════════════════
+    # 🔐 GITHUB APP TOKEN (if credentials provided)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    - name: Generate GitHub App Token
+      id: app-token
+      if: inputs.github_app_id != '' && inputs.github_app_private_key != ''
+      uses: actions/create-github-app-token@v1
+      with:
+        app-id: ${{ inputs.github_app_id }}
+        private-key: ${{ inputs.github_app_private_key }}
+
+    - name: Set effective token
+      id: token
+      shell: bash
+      run: |
+        if [[ -n "${{ steps.app-token.outputs.token }}" ]]; then
+          echo "token=${{ steps.app-token.outputs.token }}" >> "$GITHUB_OUTPUT"
+          echo "🔐 Using GitHub App token"
+        else
+          echo "token=${{ inputs.github_token }}" >> "$GITHUB_OUTPUT"
+          echo "🔑 Using provided GitHub token"
+        fi
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 📖 PARSE CONFIGURATION
+    # ══════════════════════════════════════════════════════════════════════════
+
+    - name: Parse environment configuration
+      id: config
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      env:
+        SKIP_COMPONENTS: ${{ inputs.skip }}
+        ONLY_COMPONENTS: ${{ inputs.only }}
+      run: |
+        CONFIG_FILE="${{ inputs.config }}"
+        
+        # ────────────────────────────────────────────────────────────────────────
+        # Helper: Check if component should be setup
+        # ────────────────────────────────────────────────────────────────────────
+        should_setup() {
+          local component="$1"
+          
+          # If 'only' is specified, component must be in the list
+          if [[ -n "$ONLY_COMPONENTS" ]]; then
+            if echo ",$ONLY_COMPONENTS," | grep -q ",$component,"; then
+              return 0
+            else
+              return 1
+            fi
+          fi
+          
+          # If 'skip' contains this component, don't setup
+          if [[ -n "$SKIP_COMPONENTS" ]]; then
+            if echo ",$SKIP_COMPONENTS," | grep -q ",$component,"; then
+              return 1
+            fi
+          fi
+          
+          return 0
+        }
+        
+        # ────────────────────────────────────────────────────────────────────────
+        # Check for config file
+        # ────────────────────────────────────────────────────────────────────────
+        if [[ ! -f "$CONFIG_FILE" ]]; then
+          echo "⚠️ No $CONFIG_FILE found, using minimal defaults"
+          echo "has_config=false" >> "$GITHUB_OUTPUT"
+          
+          # Default: setup node if lockfile exists
+          if should_setup "node" && [[ -f "package.json" ]]; then
+            echo "setup_node=true" >> "$GITHUB_OUTPUT"
+            echo "node_version=.node-version" >> "$GITHUB_OUTPUT"
+            echo "node_package_manager=auto" >> "$GITHUB_OUTPUT"
+            echo "node_install=true" >> "$GITHUB_OUTPUT"
+            echo "node_cache=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "setup_node=false" >> "$GITHUB_OUTPUT"
+          fi
+          
+          echo "setup_python=false" >> "$GITHUB_OUTPUT"
+          echo "setup_terraform=false" >> "$GITHUB_OUTPUT"
+          echo "setup_docker=false" >> "$GITHUB_OUTPUT"
+          echo "setup_services=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        
+        echo "has_config=true" >> "$GITHUB_OUTPUT"
+        echo "📖 Parsing $CONFIG_FILE..."
+        
+        # ────────────────────────────────────────────────────────────────────────
+        # Parse Node.js configuration
+        # ────────────────────────────────────────────────────────────────────────
+        NODE_CONFIG=$(yq -e '.node // false' "$CONFIG_FILE" 2>/dev/null || echo "false")
+        
+        if [[ "$NODE_CONFIG" != "false" && "$NODE_CONFIG" != "null" ]] && should_setup "node"; then
+          echo "setup_node=true" >> "$GITHUB_OUTPUT"
+          
+          # Version
+          if [[ "$NODE_CONFIG" == "true" ]]; then
+            echo "node_version=.node-version" >> "$GITHUB_OUTPUT"
+          else
+            NODE_VERSION=$(yq -e '.node.version // ".node-version"' "$CONFIG_FILE" 2>/dev/null || echo ".node-version")
+            echo "node_version=$NODE_VERSION" >> "$GITHUB_OUTPUT"
+          fi
+          
+          # Package manager
+          PKG_MGR=$(yq -e '.node.package_manager // "auto"' "$CONFIG_FILE" 2>/dev/null || echo "auto")
+          echo "node_package_manager=$PKG_MGR" >> "$GITHUB_OUTPUT"
+          
+          # Install
+          INSTALL=$(yq -e '.node.install // true' "$CONFIG_FILE" 2>/dev/null || echo "true")
+          echo "node_install=$INSTALL" >> "$GITHUB_OUTPUT"
+          
+          # Cache
+          CACHE=$(yq -e '.node.cache // true' "$CONFIG_FILE" 2>/dev/null || echo "true")
+          echo "node_cache=$CACHE" >> "$GITHUB_OUTPUT"
+          
+          echo "  ✓ Node.js: version=$NODE_VERSION, pm=$PKG_MGR"
+        else
+          echo "setup_node=false" >> "$GITHUB_OUTPUT"
+        fi
+        
+        # ────────────────────────────────────────────────────────────────────────
+        # Parse Python configuration
+        # ────────────────────────────────────────────────────────────────────────
+        PYTHON_CONFIG=$(yq -e '.python // false' "$CONFIG_FILE" 2>/dev/null || echo "false")
+        
+        if [[ "$PYTHON_CONFIG" != "false" && "$PYTHON_CONFIG" != "null" ]] && should_setup "python"; then
+          echo "setup_python=true" >> "$GITHUB_OUTPUT"
+          
+          if [[ "$PYTHON_CONFIG" == "true" ]]; then
+            echo "python_version=3.12" >> "$GITHUB_OUTPUT"
+            echo "python_package_manager=pip" >> "$GITHUB_OUTPUT"
+          else
+            # Could be just version string like "3.12" or object
+            if [[ "$PYTHON_CONFIG" =~ ^[0-9] ]]; then
+              echo "python_version=$PYTHON_CONFIG" >> "$GITHUB_OUTPUT"
+              echo "python_package_manager=pip" >> "$GITHUB_OUTPUT"
+            else
+              PY_VERSION=$(yq -e '.python.version // "3.12"' "$CONFIG_FILE" 2>/dev/null || echo "3.12")
+              echo "python_version=$PY_VERSION" >> "$GITHUB_OUTPUT"
+              
+              PY_PKG_MGR=$(yq -e '.python.package_manager // "pip"' "$CONFIG_FILE" 2>/dev/null || echo "pip")
+              echo "python_package_manager=$PY_PKG_MGR" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+          
+          echo "  ✓ Python: version=$(yq -e '.python.version // .python // "3.12"' "$CONFIG_FILE" 2>/dev/null)"
+        else
+          echo "setup_python=false" >> "$GITHUB_OUTPUT"
+        fi
+        
+        # ────────────────────────────────────────────────────────────────────────
+        # Parse Terraform configuration
+        # ────────────────────────────────────────────────────────────────────────
+        TF_CONFIG=$(yq -e '.terraform // false' "$CONFIG_FILE" 2>/dev/null || echo "false")
+        
+        if [[ "$TF_CONFIG" != "false" && "$TF_CONFIG" != "null" ]] && should_setup "terraform"; then
+          echo "setup_terraform=true" >> "$GITHUB_OUTPUT"
+          
+          if [[ "$TF_CONFIG" == "true" ]]; then
+            echo "terraform_version=latest" >> "$GITHUB_OUTPUT"
+          elif [[ "$TF_CONFIG" =~ ^[0-9] ]]; then
+            echo "terraform_version=$TF_CONFIG" >> "$GITHUB_OUTPUT"
+          else
+            TF_VERSION=$(yq -e '.terraform.version // "latest"' "$CONFIG_FILE" 2>/dev/null || echo "latest")
+            echo "terraform_version=$TF_VERSION" >> "$GITHUB_OUTPUT"
+          fi
+          
+          # Terragrunt
+          TG_CONFIG=$(yq -e '.terragrunt // false' "$CONFIG_FILE" 2>/dev/null || echo "false")
+          if [[ "$TG_CONFIG" != "false" && "$TG_CONFIG" != "null" ]]; then
+            if [[ "$TG_CONFIG" == "true" ]]; then
+              echo "terragrunt_version=latest" >> "$GITHUB_OUTPUT"
+            elif [[ "$TG_CONFIG" =~ ^[0-9] ]]; then
+              echo "terragrunt_version=$TG_CONFIG" >> "$GITHUB_OUTPUT"
+            else
+              TG_VERSION=$(yq -e '.terragrunt.version // "latest"' "$CONFIG_FILE" 2>/dev/null || echo "latest")
+              echo "terragrunt_version=$TG_VERSION" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "terragrunt_version=" >> "$GITHUB_OUTPUT"
+          fi
+          
+          # TFLint
+          TFLINT_CONFIG=$(yq -e '.tflint // false' "$CONFIG_FILE" 2>/dev/null || echo "false")
+          if [[ "$TFLINT_CONFIG" != "false" && "$TFLINT_CONFIG" != "null" ]]; then
+            echo "tflint_enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tflint_enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+          
+          echo "  ✓ Terraform configured"
+        else
+          echo "setup_terraform=false" >> "$GITHUB_OUTPUT"
+        fi
+        
+        # ────────────────────────────────────────────────────────────────────────
+        # Parse Docker configuration
+        # ────────────────────────────────────────────────────────────────────────
+        DOCKER_CONFIG=$(yq -e '.docker // false' "$CONFIG_FILE" 2>/dev/null || echo "false")
+        
+        if [[ "$DOCKER_CONFIG" != "false" && "$DOCKER_CONFIG" != "null" ]] && should_setup "docker"; then
+          echo "setup_docker=true" >> "$GITHUB_OUTPUT"
+          
+          # Buildx
+          BUILDX=$(yq -e '.docker.buildx // true' "$CONFIG_FILE" 2>/dev/null || echo "true")
+          echo "docker_buildx=$BUILDX" >> "$GITHUB_OUTPUT"
+          
+          # Platforms
+          PLATFORMS=$(yq -e '.docker.platforms // ["linux/amd64"] | join(",")' "$CONFIG_FILE" 2>/dev/null || echo "linux/amd64")
+          echo "docker_platforms=$PLATFORMS" >> "$GITHUB_OUTPUT"
+          
+          # Registry from env or config
+          REGISTRY="${DOCKER_REGISTRY:-$(yq -e '.docker.registry // ""' "$CONFIG_FILE" 2>/dev/null || echo "")}"
+          echo "docker_registry=$REGISTRY" >> "$GITHUB_OUTPUT"
+          
+          echo "  ✓ Docker: buildx=$BUILDX, platforms=$PLATFORMS"
+        else
+          echo "setup_docker=false" >> "$GITHUB_OUTPUT"
+        fi
+        
+        # ────────────────────────────────────────────────────────────────────────
+        # Parse Services configuration
+        # ────────────────────────────────────────────────────────────────────────
+        SERVICES_CONFIG=$(yq -e '.services // {}' "$CONFIG_FILE" 2>/dev/null || echo "{}")
+        
+        if [[ "$SERVICES_CONFIG" != "{}" && "$SERVICES_CONFIG" != "null" ]] && should_setup "services"; then
+          echo "setup_services=true" >> "$GITHUB_OUTPUT"
+          
+          # Extract service names
+          SERVICE_NAMES=$(yq -e '.services | keys | join(",")' "$CONFIG_FILE" 2>/dev/null || echo "")
+          echo "service_names=$SERVICE_NAMES" >> "$GITHUB_OUTPUT"
+          
+          # Store full services config as JSON for later parsing
+          SERVICES_JSON=$(yq -e '.services' -o=json "$CONFIG_FILE" 2>/dev/null || echo "{}")
+          echo "services_json<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$SERVICES_JSON" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          
+          echo "  ✓ Services: $SERVICE_NAMES"
+        else
+          echo "setup_services=false" >> "$GITHUB_OUTPUT"
+          echo "service_names=" >> "$GITHUB_OUTPUT"
+        fi
+        
+        echo "✅ Configuration parsed successfully"
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 🟢 NODE.JS SETUP
+    # ══════════════════════════════════════════════════════════════════════════
+
+    - name: Setup Node.js
+      if: steps.config.outputs.setup_node == 'true'
+      uses: tsok-org/.github/actions/setup-node@main
+      with:
+        node_version: ${{ steps.config.outputs.node_version }}
+        package_manager: ${{ steps.config.outputs.node_package_manager }}
+        install: ${{ steps.config.outputs.node_install }}
+        cache: ${{ steps.config.outputs.node_cache }}
+        working_directory: ${{ inputs.working_directory }}
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 🐍 PYTHON SETUP
+    # ══════════════════════════════════════════════════════════════════════════
+
+    - name: Setup Python
+      if: steps.config.outputs.setup_python == 'true'
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ steps.config.outputs.python_version }}
+
+    - name: Install Poetry
+      if: steps.config.outputs.setup_python == 'true' && steps.config.outputs.python_package_manager == 'poetry'
+      shell: bash
+      run: |
+        echo "📦 Installing Poetry..."
+        curl -sSL https://install.python-poetry.org | python3 -
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+    - name: Install uv
+      if: steps.config.outputs.setup_python == 'true' && steps.config.outputs.python_package_manager == 'uv'
+      shell: bash
+      run: |
+        echo "📦 Installing uv..."
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 🏗️ TERRAFORM SETUP
+    # ══════════════════════════════════════════════════════════════════════════
+
+    - name: Setup Terraform
+      if: steps.config.outputs.setup_terraform == 'true'
+      uses: tsok-org/.github/actions/setup-terraform@main
+      with:
+        terraform_version: ${{ steps.config.outputs.terraform_version }}
+        terragrunt_version: ${{ steps.config.outputs.terragrunt_version }}
+        tflint: ${{ steps.config.outputs.tflint_enabled }}
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 🐳 DOCKER SETUP
+    # ══════════════════════════════════════════════════════════════════════════
+
+    - name: Setup Docker
+      if: steps.config.outputs.setup_docker == 'true'
+      uses: tsok-org/.github/actions/setup-docker@main
+      with:
+        registry: ${{ steps.config.outputs.docker_registry || env.DOCKER_REGISTRY }}
+        username: ${{ env.DOCKER_USERNAME }}
+        password: ${{ env.DOCKER_PASSWORD }}
+        platforms: ${{ steps.config.outputs.docker_platforms }}
+        buildx: ${{ steps.config.outputs.docker_buildx }}
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 📦 SERVICES SETUP
+    # ══════════════════════════════════════════════════════════════════════════
+
+    - name: Start service containers
+      if: steps.config.outputs.setup_services == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      env:
+        SERVICES_JSON: ${{ steps.config.outputs.services_json }}
+      run: |
+        echo "🚀 Starting service containers..."
+        
+        # Parse services JSON and start each container
+        echo "$SERVICES_JSON" | jq -r 'to_entries[] | @base64' | while read -r service; do
+          # Decode service config
+          SERVICE_NAME=$(echo "$service" | base64 -d | jq -r '.key')
+          SERVICE_CONFIG=$(echo "$service" | base64 -d | jq -r '.value')
+          
+          echo "  Starting $SERVICE_NAME..."
+          
+          # Get image
+          IMAGE=$(echo "$SERVICE_CONFIG" | jq -r '.image // empty')
+          if [[ -z "$IMAGE" ]]; then
+            # Use service name as image with default tag
+            case "$SERVICE_NAME" in
+              postgres) IMAGE="postgres:16-alpine" ;;
+              redis) IMAGE="redis:7-alpine" ;;
+              nats) IMAGE="nats:2.10-alpine" ;;
+              mysql) IMAGE="mysql:8" ;;
+              mongo) IMAGE="mongo:7" ;;
+              *) IMAGE="$SERVICE_NAME:latest" ;;
+            esac
+          fi
+          
+          # Get port
+          PORT=$(echo "$SERVICE_CONFIG" | jq -r '.port // empty')
+          PORT_ARG=""
+          if [[ -n "$PORT" ]]; then
+            PORT_ARG="-p $PORT:$PORT"
+          fi
+          
+          # Get args
+          ARGS=$(echo "$SERVICE_CONFIG" | jq -r '.args // [] | join(" ")')
+          
+          # Build environment variables
+          ENV_ARGS=""
+          
+          # Service-specific env from config
+          ENV_CONFIG=$(echo "$SERVICE_CONFIG" | jq -r '.env // {} | to_entries[] | "-e \(.key)=\(.value)"' 2>/dev/null || echo "")
+          if [[ -n "$ENV_CONFIG" ]]; then
+            ENV_ARGS="$ENV_CONFIG"
+          fi
+          
+          # Override with actual environment variables
+          case "$SERVICE_NAME" in
+            postgres)
+              [[ -n "${POSTGRES_USER:-}" ]] && ENV_ARGS="$ENV_ARGS -e POSTGRES_USER=$POSTGRES_USER"
+              [[ -n "${POSTGRES_PASSWORD:-}" ]] && ENV_ARGS="$ENV_ARGS -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD"
+              [[ -n "${POSTGRES_DB:-}" ]] && ENV_ARGS="$ENV_ARGS -e POSTGRES_DB=$POSTGRES_DB"
+              ;;
+            redis)
+              [[ -n "${REDIS_PASSWORD:-}" ]] && ENV_ARGS="$ENV_ARGS -e REDIS_PASSWORD=$REDIS_PASSWORD"
+              ;;
+            mysql)
+              [[ -n "${MYSQL_ROOT_PASSWORD:-}" ]] && ENV_ARGS="$ENV_ARGS -e MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD"
+              [[ -n "${MYSQL_DATABASE:-}" ]] && ENV_ARGS="$ENV_ARGS -e MYSQL_DATABASE=$MYSQL_DATABASE"
+              ;;
+          esac
+          
+          # Get healthcheck
+          HEALTHCHECK=$(echo "$SERVICE_CONFIG" | jq -r '.healthcheck // empty')
+          
+          # Start container
+          CONTAINER_NAME="test-$SERVICE_NAME"
+          docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+          
+          # shellcheck disable=SC2086
+          docker run -d \
+            --name "$CONTAINER_NAME" \
+            $PORT_ARG \
+            $ENV_ARGS \
+            "$IMAGE" \
+            $ARGS
+          
+          echo "    ✓ $SERVICE_NAME started (container: $CONTAINER_NAME)"
+        done
+        
+        # Wait for services to be healthy
+        echo ""
+        echo "⏳ Waiting for services to be ready..."
+        sleep 5
+        
+        # Service-specific health checks
+        SERVICE_NAMES="${{ steps.config.outputs.service_names }}"
+        
+        if echo "$SERVICE_NAMES" | grep -q "postgres"; then
+          echo "  Checking PostgreSQL..."
+          for i in {1..30}; do
+            if docker exec test-postgres pg_isready -U "${POSTGRES_USER:-postgres}" >/dev/null 2>&1; then
+              echo "    ✓ PostgreSQL ready"
+              break
+            fi
+            sleep 1
+          done
+        fi
+        
+        if echo "$SERVICE_NAMES" | grep -q "redis"; then
+          echo "  Checking Redis..."
+          for i in {1..30}; do
+            if docker exec test-redis redis-cli ping >/dev/null 2>&1; then
+              echo "    ✓ Redis ready"
+              break
+            fi
+            sleep 1
+          done
+        fi
+        
+        echo ""
+        echo "✅ All services started"
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 📊 SUMMARY
+    # ══════════════════════════════════════════════════════════════════════════
+
+    - name: Environment Summary
+      shell: bash
+      run: |
+        echo "## 🛠️ Environment Setup Complete" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Component | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+        
+        if [[ "${{ steps.config.outputs.setup_node }}" == "true" ]]; then
+          echo "| Node.js | ✅ Configured |" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [[ "${{ steps.config.outputs.setup_python }}" == "true" ]]; then
+          echo "| Python | ✅ Configured |" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [[ "${{ steps.config.outputs.setup_terraform }}" == "true" ]]; then
+          echo "| Terraform | ✅ Configured |" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [[ "${{ steps.config.outputs.setup_docker }}" == "true" ]]; then
+          echo "| Docker | ✅ Configured |" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [[ "${{ steps.config.outputs.setup_services }}" == "true" ]]; then
+          echo "| Services | ✅ ${{ steps.config.outputs.service_names }} |" >> $GITHUB_STEP_SUMMARY
+        fi

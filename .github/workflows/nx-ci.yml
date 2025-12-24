@@ -258,12 +258,12 @@ jobs:
       # 🛠️ ENVIRONMENT SETUP
       # ════════════════════════════════════════════════════════════════════════
 
-      - name: Setup Node.js environment
-        uses: tsok-org/.github/actions/setup-node@main
+      - name: Setup environment
+        uses: tsok-org/.github/actions/environment-setup@main
         with:
-          node_version: ${{ inputs.node_version }}
-          node_version_file: ${{ inputs.node_version_file }}
           working_directory: ${{ inputs.working_directory }}
+          # Only setup node (skip docker, terraform, services)
+          only: node
 
       # ════════════════════════════════════════════════════════════════════════
       # ☁️ NX CLOUD DISTRIBUTION (OPTIONAL)
