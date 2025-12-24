@@ -8,6 +8,7 @@
 # ┌─────────────────────────────────────────────────────────────────────────────┐
 # │ FEATURES                                                                    │
 # ├─────────────────────────────────────────────────────────────────────────────┤
+# │ • Declarative environment setup via .environment.yml                       │
 # │ • Automatic package manager detection (npm, pnpm, yarn, bun)               │
 # │ • Nx affected detection for optimized builds                               │
 # │ • Configurable lint, test, build, and e2e tasks                           │
@@ -60,22 +61,33 @@ on:
   workflow_call:
     inputs:
       # ─────────────────────────────────────────────────────────────────────────
-      # Environment Configuration
+      # Environment Setup Configuration
       # ─────────────────────────────────────────────────────────────────────────
-      node_version:
+      environment_config:
         description: |
-          Explicit Node.js version to use.
-          If not set, reads from node_version_file.
+          Path to environment configuration file.
+          Default: .environment.yml
+        required: false
+        type: string
+        default: ".environment.yml"
+
+      environment_skip:
+        description: |
+          Components to skip in environment setup (comma-separated).
+          Options: node, python, terraform, docker, services
+          Default for CI: "docker,terraform,services"
+        required: false
+        type: string
+        default: "docker,terraform,services"
+
+      environment_only:
+        description: |
+          Only setup these components (comma-separated).
+          If set, only listed components are configured.
+          Example: "node" or "node,python"
         required: false
         type: string
         default: ""
-
-      node_version_file:
-        description: |
-          File to read Node.js version from.
-        required: false
-        type: string
-        default: ".node-version"
 
       working_directory:
         description: |
@@ -192,6 +204,23 @@ on:
         type: boolean
         default: true
 
+      # ─────────────────────────────────────────────────────────────────────────
+      # Runner Configuration
+      # ─────────────────────────────────────────────────────────────────────────
+      runs_on:
+        description: |
+          Runner to use for the job.
+          Example: "ubuntu-latest", "self-hosted", '["self-hosted", "linux"]'
+        required: false
+        type: string
+        default: "ubuntu-latest"
+
+      timeout_minutes:
+        description: "Job timeout in minutes"
+        required: false
+        type: number
+        default: 30
+
     secrets:
       nx_cloud_access_token:
         description: "Nx Cloud access token for remote caching"
@@ -199,6 +228,14 @@ on:
 
       codecov_token:
         description: "Codecov token for coverage upload"
+        required: false
+
+      github_app_id:
+        description: "GitHub App ID for authentication (optional)"
+        required: false
+
+      github_app_private_key:
+        description: "GitHub App private key (optional)"
         required: false
 
     outputs:
@@ -225,7 +262,8 @@ env:
 jobs:
   ci:
     name: Lint, Test, Build
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
 
     outputs:
       lint_result: ${{ steps.lint.outcome }}
@@ -261,9 +299,12 @@ jobs:
       - name: Setup environment
         uses: tsok-org/.github/actions/environment-setup@main
         with:
+          config: ${{ inputs.environment_config }}
           working_directory: ${{ inputs.working_directory }}
-          # Only setup node (skip docker, terraform, services)
-          only: node
+          github_app_id: ${{ secrets.github_app_id }}
+          github_app_private_key: ${{ secrets.github_app_private_key }}
+          skip: ${{ inputs.environment_skip }}
+          only: ${{ inputs.environment_only }}
 
       # ════════════════════════════════════════════════════════════════════════
       # ☁️ NX CLOUD DISTRIBUTION (OPTIONAL)
@@ -364,7 +405,7 @@ jobs:
         if: inputs.coverage && inputs.coverage_reporter == 'coveralls'
         uses: coverallsapp/github-action@v2
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
           path-to-lcov: ./coverage/lcov.info
         continue-on-error: true
 

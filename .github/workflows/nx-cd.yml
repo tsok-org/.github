@@ -1,5 +1,5 @@
 # ╔══════════════════════════════════════════════════════════════════════════════╗
-# ║                         NX RELEASE WORKFLOW                                  ║
+# ║                      NX CONTINUOUS DELIVERY WORKFLOW                         ║
 # ╠══════════════════════════════════════════════════════════════════════════════╣
 # ║  Reusable CD workflow for Nx monorepos with versioning, publishing,          ║
 # ║  Docker builds, and GitHub releases.                                         ║
@@ -8,6 +8,7 @@
 # ┌─────────────────────────────────────────────────────────────────────────────┐
 # │ FEATURES                                                                    │
 # ├─────────────────────────────────────────────────────────────────────────────┤
+# │ • Declarative environment setup via .environment.yml                       │
 # │ • Automatic versioning with conventional commits                           │
 # │ • Pre-release support (alpha, beta, rc)                                    │
 # │ • Optional npm publishing                                                   │
@@ -32,12 +33,14 @@
 # │                                                                             │
 # │   jobs:                                                                     │
 # │     release:                                                                │
-# │       uses: tsok-org/.github/.github/workflows/nx-release.yml@main         │
+# │       uses: tsok-org/.github/.github/workflows/nx-cd.yml@main              │
 # │       with:                                                                 │
 # │         publish_npm: true                                                   │
 # │         create_release: true                                                │
 # │       secrets:                                                              │
 # │         npm_token: ${{ secrets.NPM_TOKEN }}                                │
+# │         github_app_id: ${{ vars.APP_ID }}                                  │
+# │         github_app_private_key: ${{ secrets.APP_PRIVATE_KEY }}             │
 # │                                                                             │
 # └─────────────────────────────────────────────────────────────────────────────┘
 #
@@ -47,7 +50,7 @@
 # │                                                                             │
 # │   jobs:                                                                     │
 # │     beta:                                                                   │
-# │       uses: tsok-org/.github/.github/workflows/nx-release.yml@main         │
+# │       uses: tsok-org/.github/.github/workflows/nx-cd.yml@main              │
 # │       with:                                                                 │
 # │         preid: beta                                                         │
 # │         dist_tag: beta                                                      │
@@ -70,25 +73,39 @@
 # │                                                                             │
 # └─────────────────────────────────────────────────────────────────────────────┘
 
-name: Nx Release
+name: Nx CD
 
 on:
   workflow_call:
     inputs:
       # ─────────────────────────────────────────────────────────────────────────
-      # Environment Configuration
+      # Environment Setup Configuration
       # ─────────────────────────────────────────────────────────────────────────
-      node_version:
-        description: "Node.js version to use"
+      environment_config:
+        description: |
+          Path to environment configuration file.
+          Default: .environment.yml
+        required: false
+        type: string
+        default: ".environment.yml"
+
+      environment_skip:
+        description: |
+          Components to skip in environment setup (comma-separated).
+          Options: node, python, terraform, docker, services
+          Default for CD: "terraform,services" (docker often needed)
+        required: false
+        type: string
+        default: "terraform,services"
+
+      environment_only:
+        description: |
+          Only setup these components (comma-separated).
+          If set, only listed components are configured.
+          Example: "node,docker"
         required: false
         type: string
         default: ""
-
-      node_version_file:
-        description: "File to read Node.js version from"
-        required: false
-        type: string
-        default: ".node-version"
 
       working_directory:
         description: "Working directory for the release"
@@ -221,8 +238,16 @@ on:
         default: true
 
       # ─────────────────────────────────────────────────────────────────────────
-      # Advanced Options
+      # Git Configuration
       # ─────────────────────────────────────────────────────────────────────────
+      ref:
+        description: |
+          Git ref to checkout.
+          Leave empty to use the triggering ref.
+        required: false
+        type: string
+        default: ""
+
       skip_ci:
         description: "Add [skip ci] to version commit message"
         required: false
@@ -230,23 +255,51 @@ on:
         default: true
 
       git_user_name:
-        description: "Git user name for commits"
+        description: "Git user name for commits (used when no GitHub App)"
         required: false
         type: string
         default: "github-actions[bot]"
 
       git_user_email:
-        description: "Git user email for commits"
+        description: "Git user email for commits (used when no GitHub App)"
         required: false
         type: string
         default: "github-actions[bot]@users.noreply.github.com"
 
+      # ─────────────────────────────────────────────────────────────────────────
+      # Runner Configuration
+      # ─────────────────────────────────────────────────────────────────────────
+      runs_on:
+        description: |
+          Runner to use for the job.
+          Example: "ubuntu-latest", "self-hosted", '["self-hosted", "linux"]'
+        required: false
+        type: string
+        default: "ubuntu-latest"
+
+      timeout_minutes:
+        description: "Job timeout in minutes"
+        required: false
+        type: number
+        default: 30
+
     secrets:
-      # Token for pushing to protected branches (GitHub App recommended)
+      # GitHub App authentication (recommended for branch protection bypass)
+      github_app_id:
+        description: |
+          GitHub App ID for authentication.
+          Preferred over token for branch protection bypass.
+        required: false
+
+      github_app_private_key:
+        description: "GitHub App private key (PEM format)"
+        required: false
+
+      # Fallback token
       github_token:
         description: |
-          GitHub token for pushing tags and creating releases.
-          Use a GitHub App token to bypass branch protection.
+          GitHub token (fallback if no App credentials).
+          Cannot bypass branch protection rules.
         required: false
 
       # npm authentication
@@ -263,6 +316,11 @@ on:
         description: "Docker registry password or token"
         required: false
 
+      # Nx Cloud
+      nx_cloud_access_token:
+        description: "Nx Cloud access token for remote caching"
+        required: false
+
     outputs:
       version:
         description: "The released version"
@@ -276,10 +334,14 @@ on:
         description: "JSON array of published packages"
         value: ${{ jobs.release.outputs.published_packages }}
 
+env:
+  NX_CLOUD_ACCESS_TOKEN: ${{ secrets.nx_cloud_access_token }}
+
 jobs:
   release:
     name: Release
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
 
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -292,6 +354,40 @@ jobs:
 
     steps:
       # ════════════════════════════════════════════════════════════════════════
+      # 🔐 GITHUB APP TOKEN (IF CREDENTIALS PROVIDED)
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Generate GitHub App Token
+        id: app-token
+        if: ${{ secrets.github_app_id != '' && secrets.github_app_private_key != '' }}
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.github_app_id }}
+          private-key: ${{ secrets.github_app_private_key }}
+
+      - name: Get GitHub App User ID
+        id: get-user-id
+        if: steps.app-token.outputs.token != ''
+        run: |
+          echo "user-id=$(gh api "/users/${{ steps.app-token.outputs.app-slug }}[bot]" --jq .id)" >> "$GITHUB_OUTPUT"
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      - name: Set effective token
+        id: token
+        run: |
+          if [[ -n "${{ steps.app-token.outputs.token }}" ]]; then
+            echo "token=${{ steps.app-token.outputs.token }}" >> "$GITHUB_OUTPUT"
+            echo "🔐 Using GitHub App token"
+          elif [[ -n "${{ secrets.github_token }}" ]]; then
+            echo "token=${{ secrets.github_token }}" >> "$GITHUB_OUTPUT"
+            echo "🔑 Using provided GitHub token"
+          else
+            echo "token=${{ github.token }}" >> "$GITHUB_OUTPUT"
+            echo "🔑 Using default GitHub token"
+          fi
+
+      # ════════════════════════════════════════════════════════════════════════
       # 📥 CHECKOUT
       # ════════════════════════════════════════════════════════════════════════
 
@@ -299,18 +395,35 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.github_token || github.token }}
+          token: ${{ steps.token.outputs.token }}
+          ref: ${{ inputs.ref || github.ref }}
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 🔄 NX AFFECTED DETECTION
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Set Nx SHAs for affected detection
+        uses: nrwl/nx-set-shas@v4
 
       # ════════════════════════════════════════════════════════════════════════
       # 🛠️ ENVIRONMENT SETUP
       # ════════════════════════════════════════════════════════════════════════
 
-      - name: Setup Node.js environment
-        uses: tsok-org/.github/actions/setup-node@main
+      - name: Setup environment
+        uses: tsok-org/.github/actions/environment-setup@main
         with:
-          node_version: ${{ inputs.node_version }}
-          node_version_file: ${{ inputs.node_version_file }}
+          config: ${{ inputs.environment_config }}
           working_directory: ${{ inputs.working_directory }}
+          github_app_id: ${{ secrets.github_app_id }}
+          github_app_private_key: ${{ secrets.github_app_private_key }}
+          github_token: ${{ steps.token.outputs.token }}
+          skip: ${{ inputs.environment_skip }}
+          only: ${{ inputs.environment_only }}
+        env:
+          # Docker credentials for environment-setup
+          DOCKER_REGISTRY: ${{ inputs.docker_registry }}
+          DOCKER_USERNAME: ${{ secrets.docker_username || github.actor }}
+          DOCKER_PASSWORD: ${{ secrets.docker_password || github.token }}
 
       # ════════════════════════════════════════════════════════════════════════
       # 🔧 GIT CONFIGURATION
@@ -318,8 +431,15 @@ jobs:
 
       - name: Configure Git
         run: |
-          git config user.name "${{ inputs.git_user_name }}"
-          git config user.email "${{ inputs.git_user_email }}"
+          if [[ -n "${{ steps.app-token.outputs.app-slug }}" ]]; then
+            # Use GitHub App identity
+            git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
+            git config user.email "${{ steps.get-user-id.outputs.user-id }}+${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
+          else
+            # Use provided or default identity
+            git config user.name "${{ inputs.git_user_name }}"
+            git config user.email "${{ inputs.git_user_email }}"
+          fi
 
       # ════════════════════════════════════════════════════════════════════════
       # 🏷️ VERSION
@@ -413,6 +533,8 @@ jobs:
         run: |
           echo "📤 Pushing changes..."
           git push --follow-tags
+        env:
+          GITHUB_TOKEN: ${{ steps.token.outputs.token }}
 
       # ════════════════════════════════════════════════════════════════════════
       # 📦 NPM PUBLISH
@@ -451,15 +573,6 @@ jobs:
       # ════════════════════════════════════════════════════════════════════════
       # 🐳 DOCKER BUILD & PUSH
       # ════════════════════════════════════════════════════════════════════════
-
-      - name: Setup Docker
-        if: inputs.publish_docker && !inputs.dry_run
-        uses: tsok-org/.github/actions/setup-docker@main
-        with:
-          registry: ${{ inputs.docker_registry }}
-          username: ${{ secrets.docker_username || github.actor }}
-          password: ${{ secrets.docker_password || github.token }}
-          platforms: ${{ inputs.docker_platforms }}
 
       - name: Build and push Docker images
         if: inputs.publish_docker && !inputs.dry_run
@@ -542,11 +655,11 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: ${{ steps.version.outputs.tag }}
-          body: ${{ steps.changelog.outputs.release_notes || 'Release ${{ steps.version.outputs.version }}' }}
+          body: ${{ steps.changelog.outputs.release_notes || format('Release {0}', steps.version.outputs.version) }}
           prerelease: ${{ inputs.github_prerelease }}
           generate_release_notes: ${{ !inputs.generate_changelog }}
         env:
-          GITHUB_TOKEN: ${{ secrets.github_token || github.token }}
+          GITHUB_TOKEN: ${{ steps.token.outputs.token }}
 
       # ════════════════════════════════════════════════════════════════════════
       # 📊 SUMMARY
