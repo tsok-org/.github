@@ -42,14 +42,14 @@ inputs:
   username:
     description: |
       Username for registry authentication.
-      For GHCR, use ${{ github.actor }}.
+      For GHCR, use github.actor.
     required: false
     default: ""
 
   password:
     description: |
       Password or token for registry authentication.
-      For GHCR, use ${{ secrets.GITHUB_TOKEN }}.
+      For GHCR, use secrets.GITHUB_TOKEN.
     required: false
     default: ""
 

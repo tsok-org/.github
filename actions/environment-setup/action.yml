@@ -422,7 +422,7 @@ runs:
         username: ${{ env.DOCKER_USERNAME }}
         password: ${{ env.DOCKER_PASSWORD }}
         platforms: ${{ steps.config.outputs.docker_platforms }}
-        buildx: ${{ steps.config.outputs.docker_buildx }}
+        setup_buildx: ${{ steps.config.outputs.docker_buildx }}
 
     # ══════════════════════════════════════════════════════════════════════════
     # 📦 SERVICES SETUP
