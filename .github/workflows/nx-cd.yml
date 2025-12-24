@@ -1,58 +1,54 @@
-# ╔══════════════════════════════════════════════════════════════════════════════╗
-# ║                      NX CONTINUOUS DELIVERY WORKFLOW                         ║
-# ╠══════════════════════════════════════════════════════════════════════════════╣
-# ║  Reusable CD workflow for Nx monorepos with independent versioning           ║
-# ║  using nx release for versioning, tagging, releases, and publishing.         ║
-# ╚══════════════════════════════════════════════════════════════════════════════╝
+# ╔═════════════════════════════════════════════════════════════════════════════╗
+# ║                      NX CONTINUOUS DELIVERY WORKFLOW                        ║
+# ╠═════════════════════════════════════════════════════════════════════════════╣
+# ║  Reusable CD workflow for Nx monorepos with independent versioning          ║
+# ║  using nx release for versioning, tagging, releases, and publishing.        ║
+# ╚═════════════════════════════════════════════════════════════════════════════╝
 #
 # ┌─────────────────────────────────────────────────────────────────────────────┐
 # │ FEATURES                                                                    │
 # ├─────────────────────────────────────────────────────────────────────────────┤
-# │ • Declarative environment setup via .environment.yml                       │
-# │ • Independent project versioning with nx release                           │
+# │ • Declarative environment setup via .environment.yml                        │
+# │ • Independent project versioning with nx release                            │
+# │ • Pre-release support (alpha, beta, rc) with configurable preid/dist-tag    │
 # │ • Automatic conventional commit analysis                                    │
-# │ • GitHub releases with auto-generated notes                                │
-# │ • Publishes npm packages, Docker images, and other artifacts               │
-# │ • Tag and branch protection bypass with GitHub App                         │
+# │ • GitHub releases with auto-generated notes                                 │
+# │ • Publishes npm packages, Docker images, and other artifacts                │
+# │ • Tag and branch protection bypass with GitHub App                          │
 # └─────────────────────────────────────────────────────────────────────────────┘
 #
 # ┌─────────────────────────────────────────────────────────────────────────────┐
-# │ USAGE: PRODUCTION RELEASE                                                   │
+# │ RELEASE STRATEGY                                                            │
 # ├─────────────────────────────────────────────────────────────────────────────┤
 # │                                                                             │
-# │   name: Release                                                             │
-# │   on:                                                                       │
-# │     push:                                                                   │
-# │       branches: [main]                                                      │
-# │                                                                             │
-# │   permissions:                                                              │
-# │     contents: write                                                         │
-# │     packages: write                                                         │
-# │                                                                             │
-# │   jobs:                                                                     │
-# │     release:                                                                │
-# │       uses: tsok-org/.github/.github/workflows/nx-cd.yml@main              │
-# │       secrets:                                                              │
-# │         npm_token: ${{ secrets.NPM_TOKEN }}                                │
-# │         github_app_private_key: ${{ secrets.APP_PRIVATE_KEY }}             │
-# │       with:                                                                 │
-# │         github_app_id: ${{ vars.APP_ID }}                                  │
+# │   Branch/Trigger     │ Pre-ID  │ npm Tag │ Example                          │
+# │   ──────────────────────────────────────────────────────────────────────    │
+# │   develop (nightly)  │ alpha   │ alpha   │ 1.2.3-alpha.0                    │
+# │   next (push)        │ beta    │ beta    │ 1.2.3-beta.0                     │
+# │   main (push)        │ rc      │ next    │ 1.2.3-rc.0                       │
+# │   PR (labeled)       │ pr.N    │ pr-N    │ 1.2.3-pr.42.0                    │
+# │   manual (stable)    │ (none)  │ latest  │ 1.2.3                            │
 # │                                                                             │
 # └─────────────────────────────────────────────────────────────────────────────┘
 #
 # ┌─────────────────────────────────────────────────────────────────────────────┐
-# │ HOW IT WORKS                                                                │
+# │ USAGE: WITH RELEASE STRATEGY                                                │
 # ├─────────────────────────────────────────────────────────────────────────────┤
 # │                                                                             │
-# │   nx release --yes handles everything (configured in nx.json):             │
-# │   • Analyzes conventional commits per project                              │
-# │   • Bumps versions independently for each affected project                 │
-# │   • Generates changelogs                                                    │
-# │   • Creates git tags (one per project release)                             │
-# │   • Creates GitHub releases                                                 │
-# │   • Publishes to npm registry                                              │
-# │   • Builds and pushes Docker images                                        │
-# │   • Any other publish targets defined in nx.json                           │
+# │   release:                                                                  │
+# │     uses: tsok-org/.github/.github/workflows/nx-cd.yml@main                 │
+# │     with:                                                                   │
+# │       ref: ${{ needs.config.outputs.ref }}                                  │
+# │       preid: ${{ needs.config.outputs.preid }}                              │
+# │       dist_tag: ${{ needs.config.outputs.dist_tag }}                        │
+# │       github_prerelease: ${{ needs.config.outputs.prerelease == 'true' }}   │
+# │       publish_docker: true                                                  │
+# │       github_app_id: ${{ vars.APP_ID }}                                     │
+# │     secrets:                                                                │
+# │       github_app_private_key: ${{ secrets.APP_PRIVATE_KEY }}                │
+# │       npm_token: ${{ secrets.NPM_TOKEN }}                                   │
+# │       docker_username: ${{ github.actor }}                                  │
+# │       docker_password: ${{ secrets.GITHUB_TOKEN }}                          │
 # │                                                                             │
 # └─────────────────────────────────────────────────────────────────────────────┘
 
@@ -95,6 +91,60 @@ on:
         required: false
         type: string
         default: "."
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Version Configuration
+      # ─────────────────────────────────────────────────────────────────────────
+      preid:
+        description: |
+          Prerelease identifier (e.g., alpha, beta, rc, pr.42).
+          Leave empty for stable releases.
+        required: false
+        type: string
+        default: ""
+
+      dist_tag:
+        description: |
+          npm dist-tag for published packages (e.g., latest, next, alpha, beta).
+          Default: latest
+        required: false
+        type: string
+        default: "latest"
+
+      github_prerelease:
+        description: |
+          Mark GitHub release as prerelease.
+          Default: false (stable release)
+        required: false
+        type: boolean
+        default: false
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Docker Configuration
+      # ─────────────────────────────────────────────────────────────────────────
+      publish_docker:
+        description: |
+          Whether to publish Docker images.
+          Default: false
+        required: false
+        type: boolean
+        default: false
+
+      docker_registry:
+        description: |
+          Docker registry URL.
+          Default: ghcr.io
+        required: false
+        type: string
+        default: "ghcr.io"
+
+      docker_platforms:
+        description: |
+          Comma-separated list of Docker platforms to build for.
+          Example: "linux/amd64,linux/arm64"
+        required: false
+        type: string
+        default: "linux/amd64"
 
       # ─────────────────────────────────────────────────────────────────────────
       # Release Configuration
@@ -180,7 +230,7 @@ on:
         description: "npm token for publishing packages"
         required: false
 
-      # Docker registry authentication (if nx release publishes Docker images)
+      # Docker registry authentication
       docker_username:
         description: "Docker registry username"
         required: false
@@ -198,6 +248,9 @@ on:
       released:
         description: "Whether any projects were released"
         value: ${{ jobs.release.outputs.released }}
+      version:
+        description: "The version that was released (if any)"
+        value: ${{ jobs.release.outputs.version }}
 
 env:
   NX_CLOUD_ACCESS_TOKEN: ${{ secrets.nx_cloud_access_token }}
@@ -210,6 +263,7 @@ jobs:
 
     outputs:
       released: ${{ steps.release.outputs.released }}
+      version: ${{ steps.release.outputs.version }}
 
     defaults:
       run:
@@ -293,16 +347,24 @@ jobs:
           fi
 
       # ════════════════════════════════════════════════════════════════════════
+      # 🐳 DOCKER SETUP (CONDITIONAL)
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Set up Docker Buildx
+        if: inputs.publish_docker
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Registry
+        if: inputs.publish_docker
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ inputs.docker_registry }}
+          username: ${{ secrets.docker_username || github.actor }}
+          password: ${{ secrets.docker_password || github.token }}
+
+      # ════════════════════════════════════════════════════════════════════════
       # 🚀 NX RELEASE
       # ════════════════════════════════════════════════════════════════════════
-      # nx release --yes handles everything configured in nx.json:
-      # - Version bumping based on conventional commits (per project)
-      # - Changelog generation
-      # - Git tagging (one tag per project release)
-      # - GitHub release creation
-      # - npm publishing
-      # - Docker image builds and pushes
-      # - Any other configured publish targets
 
       - name: Detect package manager
         id: pkg-manager
@@ -339,40 +401,60 @@ jobs:
           echo "🚀 Running nx release..."
 
           PKG_MGR="${{ steps.pkg-manager.outputs.manager }}"
-          
-          # Build the command based on package manager
+          PREID="${{ inputs.preid }}"
+          DIST_TAG="${{ inputs.dist_tag }}"
+          IS_PRERELEASE="${{ inputs.github_prerelease }}"
+
+          # Build the base command based on package manager
           case "$PKG_MGR" in
-            bun)   CMD="bun nx release --yes" ;;
-            pnpm)  CMD="pnpm nx release --yes" ;;
-            yarn)  CMD="yarn nx release --yes" ;;
-            npm)   CMD="npm exec nx release -- --yes" ;;
-            *)     CMD="npx nx release --yes" ;;
+            bun)   BASE_CMD="bun nx release" ;;
+            pnpm)  BASE_CMD="pnpm nx release" ;;
+            yarn)  BASE_CMD="yarn nx release" ;;
+            npm)   BASE_CMD="npm exec nx release --" ;;
+            *)     BASE_CMD="npx nx release" ;;
           esac
+
+          # Build command arguments
+          ARGS="--yes"
+
+          # Add preid if specified (for prerelease versions)
+          if [ -n "$PREID" ]; then
+            ARGS="$ARGS --preid $PREID"
+            echo "📋 Using preid: $PREID"
+          fi
 
           # First release mode (skip changelog comparison)
           if [ "${{ inputs.first_release }}" == "true" ]; then
-            CMD="$CMD --first-release"
+            ARGS="$ARGS --first-release"
           fi
 
           # Dry run mode
           if [ "${{ inputs.dry_run }}" == "true" ]; then
-            CMD="$CMD --dry-run"
+            ARGS="$ARGS --dry-run"
           fi
 
           # Verbose output
           if [ "${{ inputs.verbose }}" == "true" ]; then
-            CMD="$CMD --verbose"
+            ARGS="$ARGS --verbose"
           fi
 
+          # Full command
+          CMD="$BASE_CMD $ARGS"
           echo "Running: $CMD"
-          
-          if $CMD; then
+
+          # Run the release
+          if $CMD 2>&1 | tee release-output.txt; then
             echo "released=true" >> "$GITHUB_OUTPUT"
             echo "✅ Release completed successfully"
+            
+            # Try to extract version from output
+            VERSION=$(grep -oP 'Published version \K[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' release-output.txt | head -1 || true)
+            if [ -n "$VERSION" ]; then
+              echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+              echo "📦 Released version: $VERSION"
+            fi
           else
             EXIT_CODE=$?
-            # nx release exits with 0 even when nothing to release
-            # Check if it was a real failure
             if [ $EXIT_CODE -ne 0 ]; then
               echo "released=false" >> "$GITHUB_OUTPUT"
               echo "⚠️ Release command returned exit code $EXIT_CODE"
@@ -384,8 +466,12 @@ jobs:
           GITHUB_TOKEN: ${{ steps.token.outputs.token }}
           NPM_TOKEN: ${{ secrets.npm_token }}
           NODE_AUTH_TOKEN: ${{ secrets.npm_token }}
+          NPM_CONFIG_TAG: ${{ inputs.dist_tag }}
+          NX_RELEASE_PRERELEASE: ${{ inputs.github_prerelease }}
           DOCKER_USERNAME: ${{ secrets.docker_username || github.actor }}
           DOCKER_PASSWORD: ${{ secrets.docker_password || github.token }}
+          DOCKER_REGISTRY: ${{ inputs.docker_registry }}
+          DOCKER_PLATFORMS: ${{ inputs.docker_platforms }}
 
       # ════════════════════════════════════════════════════════════════════════
       # 📊 SUMMARY
@@ -405,8 +491,23 @@ jobs:
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Released | ${{ steps.release.outputs.released || 'unknown' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | ${{ steps.release.outputs.version || 'N/A' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Pre-ID | ${{ inputs.preid || '(stable)' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dist Tag | ${{ inputs.dist_tag }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Prerelease | ${{ inputs.github_prerelease }} |" >> $GITHUB_STEP_SUMMARY
           echo "| First Release | ${{ inputs.first_release }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker | ${{ inputs.publish_docker }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ inputs.publish_docker }}" == "true" ]; then
+            echo "### 🐳 Docker Configuration" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Registry | ${{ inputs.docker_registry }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Platforms | ${{ inputs.docker_platforms }} |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
 
           echo "### 📝 What nx release handles" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -415,6 +516,8 @@ jobs:
           echo "- ✅ Changelog generation" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ Git tagging" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ GitHub releases" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ npm publishing" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Docker image builds & pushes" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ npm publishing (with dist-tag: ${{ inputs.dist_tag }})" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ inputs.publish_docker }}" == "true" ]; then
+            echo "- ✅ Docker image builds & pushes" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "- ✅ Any other configured targets" >> $GITHUB_STEP_SUMMARY
