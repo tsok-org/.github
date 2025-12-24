@@ -1,0 +1,224 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                         SETUP NODE COMPOSITE ACTION                          ║
+# ╠══════════════════════════════════════════════════════════════════════════════╣
+# ║  Intelligent Node.js environment setup with automatic package manager        ║
+# ║  detection, dependency caching, and installation.                            ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ FEATURES                                                                    │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │ • Auto-detects package manager from lockfiles (pnpm, yarn, bun, npm)       │
+# │ • Automatic dependency caching for faster builds                           │
+# │ • Supports .node-version, .nvmrc, or explicit version                      │
+# │ • Optional frozen lockfile enforcement                                     │
+# │ • Outputs detected package manager and commands for downstream steps       │
+# └─────────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ USAGE                                                                       │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │                                                                             │
+# │   - name: Setup Node.js environment                                         │
+# │     uses: tsok-org/.github/actions/setup-node@main                         │
+# │                                                                             │
+# │   # With options:                                                           │
+# │   - name: Setup Node.js environment                                         │
+# │     uses: tsok-org/.github/actions/setup-node@main                         │
+# │     with:                                                                   │
+# │       node_version: "20"                                                    │
+# │       install_dependencies: true                                           │
+# │       frozen_lockfile: true                                                │
+# │                                                                             │
+# │   # Use outputs in subsequent steps:                                        │
+# │   - name: Run script                                                        │
+# │     run: ${{ steps.setup.outputs.exec }} your-script                       │
+# │                                                                             │
+# └─────────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ PACKAGE MANAGER DETECTION                                                   │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │                                                                             │
+# │   Lockfile           │ Package Manager │ Install Command                    │
+# │   ───────────────────┼─────────────────┼──────────────────────────────────  │
+# │   pnpm-lock.yaml     │ pnpm            │ pnpm install --frozen-lockfile     │
+# │   yarn.lock          │ yarn            │ yarn install --frozen-lockfile     │
+# │   bun.lockb/bun.lock │ bun             │ bun install --frozen-lockfile      │
+# │   package-lock.json  │ npm             │ npm ci                             │
+# │   (none)             │ npm (fallback)  │ npm install                        │
+# │                                                                             │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
+name: "Setup Node"
+description: "Setup Node.js with automatic package manager detection and caching"
+
+inputs:
+  node_version:
+    description: |
+      Explicit Node.js version to use (e.g., '20', '20.11.0', 'lts/*').
+      If set, takes precedence over node_version_file.
+    required: false
+    default: ""
+
+  node_version_file:
+    description: |
+      File to read Node.js version from (e.g., .node-version, .nvmrc, package.json).
+      Used only if node_version is not explicitly set.
+    required: false
+    default: ".node-version"
+
+  install_dependencies:
+    description: |
+      Whether to install dependencies after setting up Node.js.
+      Set to 'false' if you want to install dependencies manually.
+    required: false
+    default: "true"
+
+  frozen_lockfile:
+    description: |
+      Whether to use frozen lockfile mode (npm ci, --frozen-lockfile).
+      Recommended for CI to ensure reproducible builds.
+    required: false
+    default: "true"
+
+  working_directory:
+    description: |
+      Working directory for package manager detection and installation.
+      Defaults to repository root.
+    required: false
+    default: "."
+
+outputs:
+  package_manager:
+    description: "Detected package manager (npm, pnpm, yarn, bun)"
+    value: ${{ steps.detect-pm.outputs.manager }}
+
+  node_version:
+    description: "Installed Node.js version"
+    value: ${{ steps.setup-node.outputs.node-version }}
+
+  install_command:
+    description: "Command used to install dependencies"
+    value: ${{ steps.detect-pm.outputs.install }}
+
+  install_frozen_command:
+    description: "Command for frozen lockfile installation"
+    value: ${{ steps.detect-pm.outputs.install_frozen }}
+
+  exec:
+    description: "Command prefix to execute package binaries (e.g., 'pnpm exec', 'npx')"
+    value: ${{ steps.detect-pm.outputs.exec }}
+
+  dlx:
+    description: "Command prefix to run packages without installing (e.g., 'pnpm dlx', 'npx')"
+    value: ${{ steps.detect-pm.outputs.dlx }}
+
+  lockfile:
+    description: "Path to the detected lockfile"
+    value: ${{ steps.detect-pm.outputs.lockfile }}
+
+runs:
+  using: "composite"
+  steps:
+    # ══════════════════════════════════════════════════════════════════════════
+    # 📦 PACKAGE MANAGER DETECTION
+    # ══════════════════════════════════════════════════════════════════════════
+
+    - name: Detect package manager
+      id: detect-pm
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        echo "🔍 Detecting package manager..."
+
+        if [ -f "pnpm-lock.yaml" ]; then
+          PM="pnpm"
+          INSTALL_FROZEN="pnpm install --frozen-lockfile"
+          INSTALL="pnpm install"
+          EXEC="pnpm exec"
+          DLX="pnpm dlx"
+          LOCKFILE="pnpm-lock.yaml"
+        elif [ -f "yarn.lock" ]; then
+          PM="yarn"
+          INSTALL_FROZEN="yarn install --frozen-lockfile"
+          INSTALL="yarn install"
+          EXEC="yarn"
+          DLX="yarn dlx"
+          LOCKFILE="yarn.lock"
+        elif [ -f "bun.lockb" ] || [ -f "bun.lock" ]; then
+          PM="bun"
+          INSTALL_FROZEN="bun install --frozen-lockfile"
+          INSTALL="bun install"
+          EXEC="bun run"
+          DLX="bunx"
+          LOCKFILE="bun.lockb"
+          [ -f "bun.lock" ] && LOCKFILE="bun.lock"
+        elif [ -f "package-lock.json" ]; then
+          PM="npm"
+          INSTALL_FROZEN="npm ci"
+          INSTALL="npm install"
+          EXEC="npx"
+          DLX="npx"
+          LOCKFILE="package-lock.json"
+        else
+          PM="npm"
+          INSTALL_FROZEN="npm install"
+          INSTALL="npm install"
+          EXEC="npx"
+          DLX="npx"
+          LOCKFILE=""
+          echo "::warning::No lockfile found, falling back to npm"
+        fi
+
+        echo "manager=$PM" >> "$GITHUB_OUTPUT"
+        echo "install_frozen=$INSTALL_FROZEN" >> "$GITHUB_OUTPUT"
+        echo "install=$INSTALL" >> "$GITHUB_OUTPUT"
+        echo "exec=$EXEC" >> "$GITHUB_OUTPUT"
+        echo "dlx=$DLX" >> "$GITHUB_OUTPUT"
+        echo "lockfile=$LOCKFILE" >> "$GITHUB_OUTPUT"
+
+        echo "📦 Detected: $PM"
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 🛠️ SETUP PACKAGE MANAGERS
+    # ══════════════════════════════════════════════════════════════════════════
+
+    - name: Setup pnpm
+      if: steps.detect-pm.outputs.manager == 'pnpm'
+      uses: pnpm/action-setup@v4
+      with:
+        run_install: false
+
+    - name: Setup Bun
+      if: steps.detect-pm.outputs.manager == 'bun'
+      uses: oven-sh/setup-bun@v2
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 📗 SETUP NODE.JS
+    # ══════════════════════════════════════════════════════════════════════════
+
+    - name: Setup Node.js
+      id: setup-node
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node_version || '' }}
+        node-version-file: ${{ inputs.node_version == '' && inputs.node_version_file || '' }}
+        cache: ${{ steps.detect-pm.outputs.manager }}
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 📥 INSTALL DEPENDENCIES
+    # ══════════════════════════════════════════════════════════════════════════
+
+    - name: Install dependencies
+      if: inputs.install_dependencies == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        if [ "${{ inputs.frozen_lockfile }}" == "true" ]; then
+          echo "📦 Installing dependencies (frozen lockfile)..."
+          ${{ steps.detect-pm.outputs.install_frozen }}
+        else
+          echo "📦 Installing dependencies..."
+          ${{ steps.detect-pm.outputs.install }}
+        fi

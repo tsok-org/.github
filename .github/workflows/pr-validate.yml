@@ -1,0 +1,212 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                      PR VALIDATION WORKFLOW                                  ║
+# ╠══════════════════════════════════════════════════════════════════════════════╣
+# ║  Validates pull request titles and optionally commits against conventional   ║
+# ║  commit standards for consistent changelog generation.                       ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ USAGE                                                                       │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │                                                                             │
+# │   name: PR Validation                                                       │
+# │   on:                                                                       │
+# │     pull_request:                                                           │
+# │       types: [opened, synchronize, reopened, edited]                        │
+# │                                                                             │
+# │   jobs:                                                                     │
+# │     validate:                                                               │
+# │       uses: tsok-org/.github/.github/workflows/pr-validate.yml@main        │
+# │                                                                             │
+# └─────────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ CONVENTIONAL COMMIT TYPES                                                   │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │                                                                             │
+# │   feat     - A new feature                                                  │
+# │   fix      - A bug fix                                                      │
+# │   docs     - Documentation only changes                                     │
+# │   style    - Code style changes (formatting, etc.)                          │
+# │   refactor - Code refactoring without feature/fix                           │
+# │   perf     - Performance improvements                                       │
+# │   test     - Adding or updating tests                                       │
+# │   build    - Build system or dependencies                                   │
+# │   ci       - CI/CD configuration                                            │
+# │   chore    - Maintenance tasks                                              │
+# │   revert   - Reverting previous changes                                     │
+# │   release  - Release related changes                                        │
+# │                                                                             │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
+name: PR Validation
+
+on:
+  workflow_call:
+    inputs:
+      validate_title:
+        description: |
+          Whether to validate the PR title against conventional commit format.
+        required: false
+        type: boolean
+        default: true
+
+      require_scope:
+        description: |
+          Whether to require a scope in the PR title.
+          Example with scope: "feat(auth): add login"
+          Example without: "feat: add login"
+        required: false
+        type: boolean
+        default: false
+
+      wip_allowed:
+        description: |
+          Whether to allow "WIP:" prefix in PR titles.
+          WIP PRs will not be merged even if they pass validation.
+        required: false
+        type: boolean
+        default: true
+
+      custom_types:
+        description: |
+          Additional commit types to allow (comma-separated).
+          These are added to the default types.
+          Example: "hotfix,security"
+        required: false
+        type: string
+        default: ""
+
+      subject_pattern:
+        description: |
+          Regex pattern for the subject (part after type/scope).
+          Default requires lowercase start and no period at end.
+        required: false
+        type: string
+        default: "^.+$"
+
+      subject_pattern_error:
+        description: |
+          Error message to show when subject pattern doesn't match.
+        required: false
+        type: string
+        default: "The subject must not be empty"
+
+      header_max_length:
+        description: |
+          Maximum length of the PR title (header).
+          Set to 0 to disable length validation.
+        required: false
+        type: number
+        default: 100
+
+      auto_label:
+        description: |
+          Whether to automatically add labels based on PR title type.
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  validate-pr:
+    name: Validate PR
+    runs-on: ubuntu-latest
+
+    permissions:
+      pull-requests: read
+      statuses: write
+
+    steps:
+      # ════════════════════════════════════════════════════════════════════════
+      # 📝 VALIDATE PR TITLE
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Validate PR title
+        if: inputs.validate_title
+        uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          wip: ${{ inputs.wip_allowed }}
+          requireScope: ${{ inputs.require_scope }}
+          subjectPattern: ${{ inputs.subject_pattern }}
+          subjectPatternError: ${{ inputs.subject_pattern_error }}
+          headerMaxLength: ${{ inputs.header_max_length }}
+          types: |
+            feat
+            fix
+            docs
+            style
+            refactor
+            perf
+            test
+            build
+            ci
+            chore
+            revert
+            release
+            ${{ inputs.custom_types }}
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 🏷️ AUTO-LABEL (OPTIONAL)
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Extract PR type
+        if: inputs.auto_label
+        id: extract-type
+        run: |
+          TITLE="${{ github.event.pull_request.title }}"
+          # Extract the type from conventional commit format
+          TYPE=$(echo "$TITLE" | sed -n 's/^\([a-z]*\).*/\1/p')
+          echo "type=$TYPE" >> "$GITHUB_OUTPUT"
+          echo "📝 Extracted type: $TYPE"
+
+      - name: Add type label
+        if: inputs.auto_label && steps.extract-type.outputs.type != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const type = '${{ steps.extract-type.outputs.type }}';
+            const labelMap = {
+              'feat': 'enhancement',
+              'fix': 'bug',
+              'docs': 'documentation',
+              'perf': 'performance',
+              'test': 'testing',
+              'ci': 'ci/cd',
+              'build': 'dependencies',
+              'chore': 'maintenance',
+              'refactor': 'refactor',
+              'revert': 'revert'
+            };
+
+            const label = labelMap[type];
+            if (label) {
+              try {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  labels: [label]
+                });
+                console.log(`✅ Added label: ${label}`);
+              } catch (error) {
+                console.log(`⚠️ Could not add label: ${error.message}`);
+              }
+            }
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 📊 SUMMARY
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## ✅ PR Validation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Title Validation | ${{ inputs.validate_title && '✅ Enabled' || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Scope Required | ${{ inputs.require_scope && 'Yes' || 'No' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| WIP Allowed | ${{ inputs.wip_allowed && 'Yes' || 'No' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Auto-Label | ${{ inputs.auto_label && '✅ Enabled' || '⏭️ Disabled' }} |" >> $GITHUB_STEP_SUMMARY

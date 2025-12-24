@@ -1,0 +1,493 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                      NX CONTINUOUS INTEGRATION WORKFLOW                      ║
+# ╠══════════════════════════════════════════════════════════════════════════════╣
+# ║  Reusable CI workflow for Nx monorepos with affected detection,              ║
+# ║  parallel execution, and optional Nx Cloud distribution.                     ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ FEATURES                                                                    │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │ • Automatic package manager detection (npm, pnpm, yarn, bun)               │
+# │ • Nx affected detection for optimized builds                               │
+# │ • Configurable lint, test, build, and e2e tasks                           │
+# │ • Parallel execution with configurable concurrency                         │
+# │ • Optional Nx Cloud distributed task execution                             │
+# │ • Coverage reporting with upload support                                   │
+# │ • Project exclusion for infrastructure or special projects                 │
+# └─────────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ USAGE                                                                       │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │                                                                             │
+# │   name: CI                                                                  │
+# │   on:                                                                       │
+# │     pull_request:                                                           │
+# │       branches: [main, develop]                                             │
+# │                                                                             │
+# │   permissions:                                                              │
+# │     contents: read                                                          │
+# │     checks: write                                                           │
+# │                                                                             │
+# │   jobs:                                                                     │
+# │     ci:                                                                     │
+# │       uses: tsok-org/.github/.github/workflows/nx-ci.yml@main              │
+# │       with:                                                                 │
+# │         lint: true                                                          │
+# │         test: true                                                          │
+# │         build: true                                                         │
+# │       secrets:                                                              │
+# │         nx_cloud_access_token: ${{ secrets.NX_CLOUD_ACCESS_TOKEN }}        │
+# │                                                                             │
+# └─────────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ NX CLOUD DISTRIBUTION                                                       │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │ For faster CI with distributed task execution:                              │
+# │                                                                             │
+# │   with:                                                                     │
+# │     distribute_on: "3 linux-medium-js"                                     │
+# │                                                                             │
+# │ This spins up 3 Nx Cloud agents to parallelize tasks across machines.      │
+# │ Requires an Nx Cloud account and NX_CLOUD_ACCESS_TOKEN secret.             │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
+name: Nx CI
+
+on:
+  workflow_call:
+    inputs:
+      # ─────────────────────────────────────────────────────────────────────────
+      # Environment Configuration
+      # ─────────────────────────────────────────────────────────────────────────
+      node_version:
+        description: |
+          Explicit Node.js version to use.
+          If not set, reads from node_version_file.
+        required: false
+        type: string
+        default: ""
+
+      node_version_file:
+        description: |
+          File to read Node.js version from.
+        required: false
+        type: string
+        default: ".node-version"
+
+      working_directory:
+        description: |
+          Working directory for the CI tasks.
+          Useful for nested Nx workspaces.
+        required: false
+        type: string
+        default: "."
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Task Configuration
+      # ─────────────────────────────────────────────────────────────────────────
+      lint:
+        description: "Run lint task on affected projects"
+        required: false
+        type: boolean
+        default: true
+
+      test:
+        description: "Run test task on affected projects"
+        required: false
+        type: boolean
+        default: true
+
+      build:
+        description: "Run build task on affected projects"
+        required: false
+        type: boolean
+        default: true
+
+      e2e:
+        description: "Run e2e task on affected projects"
+        required: false
+        type: boolean
+        default: false
+
+      custom_tasks:
+        description: |
+          Additional custom tasks to run (comma-separated).
+          Example: "typecheck,format:check"
+        required: false
+        type: string
+        default: ""
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Execution Configuration
+      # ─────────────────────────────────────────────────────────────────────────
+      parallel:
+        description: |
+          Number of parallel tasks to run.
+          Set to 1 for sequential execution.
+        required: false
+        type: number
+        default: 3
+
+      affected_only:
+        description: |
+          Run tasks only on affected projects.
+          Set to false to run on all projects.
+        required: false
+        type: boolean
+        default: true
+
+      exclude_projects:
+        description: |
+          Comma-separated list of projects to exclude.
+          Supports glob patterns.
+          Example: "cloud-*,legacy-app"
+        required: false
+        type: string
+        default: ""
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Coverage Configuration
+      # ─────────────────────────────────────────────────────────────────────────
+      coverage:
+        description: "Enable test coverage collection"
+        required: false
+        type: boolean
+        default: false
+
+      coverage_reporter:
+        description: |
+          Coverage reporter to use.
+          Options: codecov, coveralls, none
+        required: false
+        type: string
+        default: "none"
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Nx Cloud Configuration
+      # ─────────────────────────────────────────────────────────────────────────
+      distribute_on:
+        description: |
+          Nx Cloud distribution configuration.
+          Example: "3 linux-medium-js" to use 3 cloud agents.
+          Leave empty to disable distribution.
+        required: false
+        type: string
+        default: ""
+
+      stop_agents_after:
+        description: |
+          Task to stop agents after (when using distribution).
+        required: false
+        type: string
+        default: "build"
+
+      nx_cloud_enabled:
+        description: |
+          Whether to use Nx Cloud for caching.
+          Set to false to disable Nx Cloud entirely.
+        required: false
+        type: boolean
+        default: true
+
+    secrets:
+      nx_cloud_access_token:
+        description: "Nx Cloud access token for remote caching"
+        required: false
+
+      codecov_token:
+        description: "Codecov token for coverage upload"
+        required: false
+
+    outputs:
+      lint_result:
+        description: "Result of lint task (success/failure/skipped)"
+        value: ${{ jobs.ci.outputs.lint_result }}
+
+      test_result:
+        description: "Result of test task (success/failure/skipped)"
+        value: ${{ jobs.ci.outputs.test_result }}
+
+      build_result:
+        description: "Result of build task (success/failure/skipped)"
+        value: ${{ jobs.ci.outputs.build_result }}
+
+      affected_projects:
+        description: "List of affected projects"
+        value: ${{ jobs.ci.outputs.affected_projects }}
+
+env:
+  NX_CLOUD_ACCESS_TOKEN: ${{ secrets.nx_cloud_access_token }}
+  NX_NO_CLOUD: ${{ inputs.nx_cloud_enabled == false && 'true' || '' }}
+
+jobs:
+  ci:
+    name: Lint, Test, Build
+    runs-on: ubuntu-latest
+
+    outputs:
+      lint_result: ${{ steps.lint.outcome }}
+      test_result: ${{ steps.test.outcome }}
+      build_result: ${{ steps.build.outcome }}
+      affected_projects: ${{ steps.affected.outputs.projects }}
+
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+
+    steps:
+      # ════════════════════════════════════════════════════════════════════════
+      # 📥 CHECKOUT
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 🔄 NX AFFECTED DETECTION
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Set Nx SHAs for affected detection
+        uses: nrwl/nx-set-shas@v4
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 🛠️ ENVIRONMENT SETUP
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Setup Node.js environment
+        uses: tsok-org/.github/actions/setup-node@main
+        with:
+          node_version: ${{ inputs.node_version }}
+          node_version_file: ${{ inputs.node_version_file }}
+          working_directory: ${{ inputs.working_directory }}
+
+      # ════════════════════════════════════════════════════════════════════════
+      # ☁️ NX CLOUD DISTRIBUTION (OPTIONAL)
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Start Nx Cloud CI run
+        if: inputs.distribute_on != ''
+        run: |
+          echo "☁️ Starting distributed CI run..."
+          pnpm nx-cloud start-ci-run \
+            --distribute-on="${{ inputs.distribute_on }}" \
+            --stop-agents-after="${{ inputs.stop_agents_after }}"
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 📋 GET AFFECTED PROJECTS
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Get affected projects
+        id: affected
+        run: |
+          if [ "${{ inputs.affected_only }}" == "true" ]; then
+            AFFECTED=$(pnpm nx show projects --affected --json 2>/dev/null || echo "[]")
+          else
+            AFFECTED=$(pnpm nx show projects --json 2>/dev/null || echo "[]")
+          fi
+          echo "projects=$AFFECTED" >> "$GITHUB_OUTPUT"
+          echo "📋 Affected projects: $AFFECTED"
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 🔍 LINT
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Run lint
+        id: lint
+        if: inputs.lint
+        run: |
+          echo "🔍 Running lint..."
+          CMD="pnpm nx"
+
+          if [ "${{ inputs.affected_only }}" == "true" ]; then
+            CMD="$CMD affected"
+          else
+            CMD="$CMD run-many"
+          fi
+
+          CMD="$CMD -t lint --parallel=${{ inputs.parallel }}"
+
+          if [ -n "${{ inputs.exclude_projects }}" ]; then
+            CMD="$CMD --exclude=${{ inputs.exclude_projects }}"
+          fi
+
+          echo "Running: $CMD"
+          $CMD
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 🧪 TEST
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Run tests
+        id: test
+        if: inputs.test
+        run: |
+          echo "🧪 Running tests..."
+          CMD="pnpm nx"
+
+          if [ "${{ inputs.affected_only }}" == "true" ]; then
+            CMD="$CMD affected"
+          else
+            CMD="$CMD run-many"
+          fi
+
+          CMD="$CMD -t test --parallel=${{ inputs.parallel }}"
+
+          if [ "${{ inputs.coverage }}" == "true" ]; then
+            CMD="$CMD --coverage"
+          fi
+
+          if [ -n "${{ inputs.exclude_projects }}" ]; then
+            CMD="$CMD --exclude=${{ inputs.exclude_projects }}"
+          fi
+
+          echo "Running: $CMD"
+          $CMD
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 📊 COVERAGE UPLOAD (OPTIONAL)
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Upload coverage to Codecov
+        if: inputs.coverage && inputs.coverage_reporter == 'codecov'
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.codecov_token }}
+          directory: ./coverage
+          fail_ci_if_error: false
+
+      - name: Upload coverage to Coveralls
+        if: inputs.coverage && inputs.coverage_reporter == 'coveralls'
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path-to-lcov: ./coverage/lcov.info
+        continue-on-error: true
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 🏗️ BUILD
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Run build
+        id: build
+        if: inputs.build
+        run: |
+          echo "🏗️ Running build..."
+          CMD="pnpm nx"
+
+          if [ "${{ inputs.affected_only }}" == "true" ]; then
+            CMD="$CMD affected"
+          else
+            CMD="$CMD run-many"
+          fi
+
+          CMD="$CMD -t build --parallel=${{ inputs.parallel }}"
+
+          if [ -n "${{ inputs.exclude_projects }}" ]; then
+            CMD="$CMD --exclude=${{ inputs.exclude_projects }}"
+          fi
+
+          echo "Running: $CMD"
+          $CMD
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 🌐 E2E (OPTIONAL)
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Run e2e tests
+        id: e2e
+        if: inputs.e2e
+        run: |
+          echo "🌐 Running e2e tests..."
+          CMD="pnpm nx"
+
+          if [ "${{ inputs.affected_only }}" == "true" ]; then
+            CMD="$CMD affected"
+          else
+            CMD="$CMD run-many"
+          fi
+
+          CMD="$CMD -t e2e --parallel=${{ inputs.parallel }}"
+
+          if [ -n "${{ inputs.exclude_projects }}" ]; then
+            CMD="$CMD --exclude=${{ inputs.exclude_projects }}"
+          fi
+
+          echo "Running: $CMD"
+          $CMD
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 🔧 CUSTOM TASKS (OPTIONAL)
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Run custom tasks
+        if: inputs.custom_tasks != ''
+        run: |
+          echo "🔧 Running custom tasks: ${{ inputs.custom_tasks }}"
+
+          # Convert comma-separated tasks to space-separated
+          TASKS=$(echo "${{ inputs.custom_tasks }}" | tr ',' ' ')
+
+          for TASK in $TASKS; do
+            echo "Running task: $TASK"
+            CMD="pnpm nx"
+
+            if [ "${{ inputs.affected_only }}" == "true" ]; then
+              CMD="$CMD affected"
+            else
+              CMD="$CMD run-many"
+            fi
+
+            CMD="$CMD -t $TASK --parallel=${{ inputs.parallel }}"
+
+            if [ -n "${{ inputs.exclude_projects }}" ]; then
+              CMD="$CMD --exclude=${{ inputs.exclude_projects }}"
+            fi
+
+            $CMD
+          done
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 📊 SUMMARY
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Job Summary
+        if: always()
+        run: |
+          echo "## 🔄 Nx CI Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "| Task | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ inputs.lint }}" == "true" ]; then
+            LINT_STATUS="${{ steps.lint.outcome == 'success' && '✅ Passed' || steps.lint.outcome == 'failure' && '❌ Failed' || '⏭️ Skipped' }}"
+            echo "| Lint | $LINT_STATUS |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ inputs.test }}" == "true" ]; then
+            TEST_STATUS="${{ steps.test.outcome == 'success' && '✅ Passed' || steps.test.outcome == 'failure' && '❌ Failed' || '⏭️ Skipped' }}"
+            echo "| Test | $TEST_STATUS |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ inputs.build }}" == "true" ]; then
+            BUILD_STATUS="${{ steps.build.outcome == 'success' && '✅ Passed' || steps.build.outcome == 'failure' && '❌ Failed' || '⏭️ Skipped' }}"
+            echo "| Build | $BUILD_STATUS |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ inputs.e2e }}" == "true" ]; then
+            E2E_STATUS="${{ steps.e2e.outcome == 'success' && '✅ Passed' || steps.e2e.outcome == 'failure' && '❌ Failed' || '⏭️ Skipped' }}"
+            echo "| E2E | $E2E_STATUS |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Affected Only | ${{ inputs.affected_only }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Parallel | ${{ inputs.parallel }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Coverage | ${{ inputs.coverage }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Distribution | ${{ inputs.distribute_on || 'disabled' }} |" >> $GITHUB_STEP_SUMMARY

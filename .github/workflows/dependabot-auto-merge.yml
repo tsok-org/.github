@@ -1,0 +1,281 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                    DEPENDABOT AUTO-MERGE WORKFLOW                            ║
+# ╠══════════════════════════════════════════════════════════════════════════════╣
+# ║  Automatically merge Dependabot PRs after CI passes, with configurable       ║
+# ║  merge levels (patch/minor/major) and ecosystem filtering.                   ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ SECURITY                                                                    │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │ This workflow only merges PRs from the verified dependabot[bot] actor.      │
+# │ It verifies the PR author before taking any action.                         │
+# └─────────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ USAGE                                                                       │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │                                                                             │
+# │   name: Dependabot Auto-Merge                                               │
+# │   on: pull_request                                                          │
+# │                                                                             │
+# │   permissions:                                                              │
+# │     contents: write                                                         │
+# │     pull-requests: write                                                    │
+# │                                                                             │
+# │   jobs:                                                                     │
+# │     auto-merge:                                                             │
+# │       uses: tsok-org/.github/.github/workflows/dependabot-auto-merge.yml@main│
+# │       with:                                                                 │
+# │         merge_level: "minor"                                               │
+# │       secrets:                                                              │
+# │         github_token: ${{ secrets.GITHUB_TOKEN }}                          │
+# │                                                                             │
+# └─────────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ MERGE LEVELS                                                                │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │                                                                             │
+# │   patch  - Only auto-merge patch updates (1.0.0 → 1.0.1)                   │
+# │   minor  - Auto-merge patch and minor updates (1.0.0 → 1.1.0)              │
+# │   major  - Auto-merge all updates including major (1.0.0 → 2.0.0)          │
+# │                                                                             │
+# │ Default: patch (safest option)                                              │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
+name: Dependabot Auto-Merge
+
+on:
+  workflow_call:
+    inputs:
+      merge_level:
+        description: |
+          Maximum update level to auto-merge:
+            - patch: Only patch updates (safest)
+            - minor: Patch and minor updates
+            - major: All updates including major (use with caution)
+        required: false
+        type: string
+        default: "patch"
+
+      merge_method:
+        description: |
+          Merge method to use:
+            - squash: Squash and merge (recommended)
+            - merge: Create a merge commit
+            - rebase: Rebase and merge
+        required: false
+        type: string
+        default: "squash"
+
+      ecosystems:
+        description: |
+          Comma-separated list of ecosystems to auto-merge.
+          Leave empty to auto-merge all ecosystems.
+          Options: npm, pip, docker, github-actions, cargo, go, maven, etc.
+        required: false
+        type: string
+        default: ""
+
+      excluded_packages:
+        description: |
+          Comma-separated list of package names to never auto-merge.
+          Example: "lodash,express,react"
+        required: false
+        type: string
+        default: ""
+
+      approve_only:
+        description: |
+          If true, only approve the PR without enabling auto-merge.
+          Useful when you want manual merge control but automatic approval.
+        required: false
+        type: boolean
+        default: false
+
+      github_app_id:
+        description: |
+          GitHub App ID for authentication.
+          Use this for bypassing branch protection rules.
+        required: false
+        type: string
+        default: ""
+
+    secrets:
+      github_token:
+        description: |
+          GitHub token for API operations.
+          Use GITHUB_TOKEN for basic operations.
+          Use a PAT or GitHub App token for bypassing branch protection.
+        required: false
+
+      github_app_private_key:
+        description: |
+          GitHub App private key (PEM format).
+          Required if github_app_id is provided.
+        required: false
+
+jobs:
+  dependabot-auto-merge:
+    name: Auto-Merge Dependabot PR
+    runs-on: ubuntu-latest
+
+    # Only run for Dependabot PRs
+    if: github.actor == 'dependabot[bot]'
+
+    steps:
+      # ════════════════════════════════════════════════════════════════════════
+      # 🔐 AUTHENTICATION
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Generate GitHub App Token
+        if: inputs.github_app_id != ''
+        uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ inputs.github_app_id }}
+          private-key: ${{ secrets.github_app_private_key }}
+
+      - name: Set token
+        id: set-token
+        run: |
+          if [ -n "${{ steps.app-token.outputs.token }}" ]; then
+            echo "token=${{ steps.app-token.outputs.token }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "token=${{ secrets.github_token }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 📋 FETCH PR METADATA
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ steps.set-token.outputs.token }}
+
+      # ════════════════════════════════════════════════════════════════════════
+      # ✅ VALIDATION
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Check if should auto-merge
+        id: check
+        run: |
+          UPDATE_TYPE="${{ steps.metadata.outputs.update-type }}"
+          ECOSYSTEM="${{ steps.metadata.outputs.package-ecosystem }}"
+          PACKAGE="${{ steps.metadata.outputs.dependency-names }}"
+          MERGE_LEVEL="${{ inputs.merge_level }}"
+          ECOSYSTEMS="${{ inputs.ecosystems }}"
+          EXCLUDED="${{ inputs.excluded_packages }}"
+
+          echo "📦 Package: $PACKAGE"
+          echo "🔄 Update type: $UPDATE_TYPE"
+          echo "🌐 Ecosystem: $ECOSYSTEM"
+          echo "📊 Merge level: $MERGE_LEVEL"
+
+          SHOULD_MERGE="true"
+
+          # Check update type against merge level
+          case "$MERGE_LEVEL" in
+            patch)
+              if [[ "$UPDATE_TYPE" != "version-update:semver-patch" ]]; then
+                echo "⏭️ Skipping: $UPDATE_TYPE is not a patch update"
+                SHOULD_MERGE="false"
+              fi
+              ;;
+            minor)
+              if [[ "$UPDATE_TYPE" == "version-update:semver-major" ]]; then
+                echo "⏭️ Skipping: $UPDATE_TYPE is a major update"
+                SHOULD_MERGE="false"
+              fi
+              ;;
+            major)
+              # Allow all update types
+              ;;
+          esac
+
+          # Check ecosystem filter
+          if [ -n "$ECOSYSTEMS" ] && [ "$SHOULD_MERGE" == "true" ]; then
+            if ! echo ",$ECOSYSTEMS," | grep -q ",$ECOSYSTEM,"; then
+              echo "⏭️ Skipping: $ECOSYSTEM not in allowed ecosystems"
+              SHOULD_MERGE="false"
+            fi
+          fi
+
+          # Check excluded packages
+          if [ -n "$EXCLUDED" ] && [ "$SHOULD_MERGE" == "true" ]; then
+            for pkg in $(echo "$EXCLUDED" | tr ',' '\n'); do
+              if echo "$PACKAGE" | grep -q "$pkg"; then
+                echo "⏭️ Skipping: $PACKAGE is in excluded packages"
+                SHOULD_MERGE="false"
+                break
+              fi
+            done
+          fi
+
+          echo "should_merge=$SHOULD_MERGE" >> "$GITHUB_OUTPUT"
+
+          if [ "$SHOULD_MERGE" == "true" ]; then
+            echo "✅ PR qualifies for auto-merge"
+          fi
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 👍 APPROVE PR
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Approve PR
+        if: steps.check.outputs.should_merge == 'true'
+        run: |
+          echo "👍 Approving PR #${{ github.event.pull_request.number }}..."
+          gh pr review "${{ github.event.pull_request.number }}" --approve \
+            --body "🤖 Auto-approved by Dependabot Auto-Merge workflow (${{ steps.metadata.outputs.update-type }})"
+        env:
+          GITHUB_TOKEN: ${{ steps.set-token.outputs.token }}
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 🔀 ENABLE AUTO-MERGE
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Enable auto-merge
+        if: steps.check.outputs.should_merge == 'true' && inputs.approve_only == false
+        run: |
+          echo "🔀 Enabling auto-merge for PR #${{ github.event.pull_request.number }}..."
+
+          MERGE_METHOD="${{ inputs.merge_method }}"
+
+          case "$MERGE_METHOD" in
+            squash)
+              gh pr merge "${{ github.event.pull_request.number }}" --auto --squash
+              ;;
+            merge)
+              gh pr merge "${{ github.event.pull_request.number }}" --auto --merge
+              ;;
+            rebase)
+              gh pr merge "${{ github.event.pull_request.number }}" --auto --rebase
+              ;;
+          esac
+
+          echo "✅ Auto-merge enabled with $MERGE_METHOD strategy"
+        env:
+          GITHUB_TOKEN: ${{ steps.set-token.outputs.token }}
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 📊 SUMMARY
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## 🤖 Dependabot Auto-Merge Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Package | ${{ steps.metadata.outputs.dependency-names }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Update Type | ${{ steps.metadata.outputs.update-type }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Ecosystem | ${{ steps.metadata.outputs.package-ecosystem }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| From Version | ${{ steps.metadata.outputs.previous-version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| To Version | ${{ steps.metadata.outputs.new-version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Should Merge | ${{ steps.check.outputs.should_merge }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Approve Only | ${{ inputs.approve_only }} |" >> $GITHUB_STEP_SUMMARY

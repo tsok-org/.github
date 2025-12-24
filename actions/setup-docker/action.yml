@@ -1,0 +1,167 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                       SETUP DOCKER COMPOSITE ACTION                          ║
+# ╠══════════════════════════════════════════════════════════════════════════════╣
+# ║  Setup Docker with Buildx, optional QEMU for multi-arch builds, and         ║
+# ║  container registry authentication.                                          ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ USAGE                                                                       │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │                                                                             │
+# │   - name: Setup Docker                                                      │
+# │     uses: tsok-org/.github/actions/setup-docker@main                       │
+# │     with:                                                                   │
+# │       registry: ghcr.io                                                    │
+# │       username: ${{ github.actor }}                                        │
+# │       password: ${{ secrets.GITHUB_TOKEN }}                                │
+# │                                                                             │
+# │   # With multi-arch support:                                                │
+# │   - name: Setup Docker                                                      │
+# │     uses: tsok-org/.github/actions/setup-docker@main                       │
+# │     with:                                                                   │
+# │       registry: ghcr.io                                                    │
+# │       username: ${{ github.actor }}                                        │
+# │       password: ${{ secrets.GITHUB_TOKEN }}                                │
+# │       setup_qemu: true                                                     │
+# │       platforms: linux/amd64,linux/arm64                                   │
+# │                                                                             │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
+name: "Setup Docker"
+description: "Setup Docker with Buildx, QEMU, and registry authentication"
+
+inputs:
+  registry:
+    description: |
+      Container registry to authenticate with.
+      Common values: ghcr.io, docker.io, gcr.io, etc.
+    required: false
+    default: ""
+
+  username:
+    description: |
+      Username for registry authentication.
+      For GHCR, use ${{ github.actor }}.
+    required: false
+    default: ""
+
+  password:
+    description: |
+      Password or token for registry authentication.
+      For GHCR, use ${{ secrets.GITHUB_TOKEN }}.
+    required: false
+    default: ""
+
+  setup_buildx:
+    description: |
+      Whether to set up Docker Buildx.
+      Buildx enables advanced build features like multi-platform builds.
+    required: false
+    default: "true"
+
+  setup_qemu:
+    description: |
+      Whether to set up QEMU for multi-architecture builds.
+      Required for building images for different CPU architectures.
+    required: false
+    default: "false"
+
+  platforms:
+    description: |
+      Platforms to set up for QEMU (comma-separated).
+      Example: linux/amd64,linux/arm64,linux/arm/v7
+    required: false
+    default: "linux/amd64,linux/arm64"
+
+  buildx_version:
+    description: |
+      Specific Buildx version to install.
+      Leave empty for the latest version.
+    required: false
+    default: ""
+
+  driver:
+    description: |
+      Buildx driver to use.
+      Options: docker, docker-container, kubernetes, remote
+    required: false
+    default: "docker-container"
+
+  driver_opts:
+    description: |
+      Additional options for the Buildx driver.
+      Format: key=value,key2=value2
+    required: false
+    default: ""
+
+outputs:
+  buildx_version:
+    description: "Installed Buildx version"
+    value: ${{ steps.setup-buildx.outputs.version }}
+
+  buildx_name:
+    description: "Buildx builder name"
+    value: ${{ steps.setup-buildx.outputs.name }}
+
+  qemu_platforms:
+    description: "Available QEMU platforms"
+    value: ${{ steps.setup-qemu.outputs.platforms }}
+
+runs:
+  using: "composite"
+  steps:
+    # ══════════════════════════════════════════════════════════════════════════
+    # 🖥️ SETUP QEMU (FOR MULTI-ARCH BUILDS)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    - name: Setup QEMU
+      id: setup-qemu
+      if: inputs.setup_qemu == 'true'
+      uses: docker/setup-qemu-action@v3
+      with:
+        platforms: ${{ inputs.platforms }}
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 🔧 SETUP DOCKER BUILDX
+    # ══════════════════════════════════════════════════════════════════════════
+
+    - name: Setup Docker Buildx
+      id: setup-buildx
+      if: inputs.setup_buildx == 'true'
+      uses: docker/setup-buildx-action@v3
+      with:
+        version: ${{ inputs.buildx_version }}
+        driver: ${{ inputs.driver }}
+        driver-opts: ${{ inputs.driver_opts }}
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 🔐 REGISTRY AUTHENTICATION
+    # ══════════════════════════════════════════════════════════════════════════
+
+    - name: Login to container registry
+      if: inputs.registry != '' && inputs.username != '' && inputs.password != ''
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ inputs.username }}
+        password: ${{ inputs.password }}
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 📊 SUMMARY
+    # ══════════════════════════════════════════════════════════════════════════
+
+    - name: Display Docker info
+      shell: bash
+      run: |
+        echo "🐳 Docker version: $(docker --version)"
+        if [ "${{ inputs.setup_buildx }}" == "true" ]; then
+          echo "🔧 Buildx version: $(docker buildx version)"
+          echo "🔧 Buildx builder: ${{ steps.setup-buildx.outputs.name }}"
+        fi
+        if [ "${{ inputs.setup_qemu }}" == "true" ]; then
+          echo "🖥️ QEMU platforms: ${{ steps.setup-qemu.outputs.platforms }}"
+        fi
+        if [ -n "${{ inputs.registry }}" ]; then
+          echo "🔐 Logged into: ${{ inputs.registry }}"
+        fi

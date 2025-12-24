@@ -1,0 +1,156 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                      SETUP TERRAFORM COMPOSITE ACTION                        ║
+# ╠══════════════════════════════════════════════════════════════════════════════╣
+# ║  Setup Terraform CLI with optional Terragrunt and TFLint support.           ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ USAGE                                                                       │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │                                                                             │
+# │   - name: Setup Terraform                                                   │
+# │     uses: tsok-org/.github/actions/setup-terraform@main                    │
+# │                                                                             │
+# │   # With specific version:                                                  │
+# │   - name: Setup Terraform                                                   │
+# │     uses: tsok-org/.github/actions/setup-terraform@main                    │
+# │     with:                                                                   │
+# │       terraform_version: "1.12.2"                                          │
+# │       terragrunt_version: "0.68.0"                                         │
+# │       tflint_version: "0.50.0"                                             │
+# │                                                                             │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
+name: "Setup Terraform"
+description: "Setup Terraform CLI with optional Terragrunt and TFLint"
+
+inputs:
+  terraform_version:
+    description: |
+      Terraform version to install.
+      Use 'latest' for the latest stable version.
+    required: false
+    default: "latest"
+
+  terraform_wrapper:
+    description: |
+      Whether to install the Terraform wrapper script.
+      The wrapper exposes stdout, stderr, and exitcode as outputs.
+    required: false
+    default: "true"
+
+  terragrunt_version:
+    description: |
+      Terragrunt version to install.
+      Leave empty to skip Terragrunt installation.
+    required: false
+    default: ""
+
+  tflint_version:
+    description: |
+      TFLint version to install.
+      Leave empty to skip TFLint installation.
+    required: false
+    default: ""
+
+  cli_config_credentials_hostname:
+    description: |
+      Hostname for Terraform Cloud/Enterprise credentials.
+    required: false
+    default: ""
+
+  cli_config_credentials_token:
+    description: |
+      API token for Terraform Cloud/Enterprise.
+    required: false
+    default: ""
+
+outputs:
+  terraform_version:
+    description: "Installed Terraform version"
+    value: ${{ steps.setup-terraform.outputs.terraform-version }}
+
+  terragrunt_version:
+    description: "Installed Terragrunt version (if installed)"
+    value: ${{ steps.setup-terragrunt.outputs.version }}
+
+  tflint_version:
+    description: "Installed TFLint version (if installed)"
+    value: ${{ steps.setup-tflint.outputs.version }}
+
+runs:
+  using: "composite"
+  steps:
+    # ══════════════════════════════════════════════════════════════════════════
+    # 🏗️ SETUP TERRAFORM
+    # ══════════════════════════════════════════════════════════════════════════
+
+    - name: Setup Terraform
+      id: setup-terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ inputs.terraform_version }}
+        terraform_wrapper: ${{ inputs.terraform_wrapper }}
+        cli_config_credentials_hostname: ${{ inputs.cli_config_credentials_hostname }}
+        cli_config_credentials_token: ${{ inputs.cli_config_credentials_token }}
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 🌍 SETUP TERRAGRUNT (OPTIONAL)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    - name: Setup Terragrunt
+      id: setup-terragrunt
+      if: inputs.terragrunt_version != ''
+      shell: bash
+      run: |
+        VERSION="${{ inputs.terragrunt_version }}"
+        echo "📦 Installing Terragrunt $VERSION..."
+
+        # Download and install Terragrunt
+        curl -sL "https://github.com/gruntwork-io/terragrunt/releases/download/v${VERSION}/terragrunt_linux_amd64" -o terragrunt
+        chmod +x terragrunt
+        sudo mv terragrunt /usr/local/bin/
+
+        # Verify installation
+        INSTALLED_VERSION=$(terragrunt --version | head -1 | awk '{print $NF}' | sed 's/v//')
+        echo "version=$INSTALLED_VERSION" >> "$GITHUB_OUTPUT"
+        echo "✅ Terragrunt $INSTALLED_VERSION installed"
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 🔍 SETUP TFLINT (OPTIONAL)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    - name: Setup TFLint
+      id: setup-tflint
+      if: inputs.tflint_version != ''
+      shell: bash
+      run: |
+        VERSION="${{ inputs.tflint_version }}"
+        echo "📦 Installing TFLint $VERSION..."
+
+        # Download and install TFLint
+        curl -sL "https://github.com/terraform-linters/tflint/releases/download/v${VERSION}/tflint_linux_amd64.zip" -o tflint.zip
+        unzip -q tflint.zip
+        chmod +x tflint
+        sudo mv tflint /usr/local/bin/
+        rm tflint.zip
+
+        # Verify installation
+        INSTALLED_VERSION=$(tflint --version | head -1 | awk '{print $NF}')
+        echo "version=$INSTALLED_VERSION" >> "$GITHUB_OUTPUT"
+        echo "✅ TFLint $INSTALLED_VERSION installed"
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 📊 SUMMARY
+    # ══════════════════════════════════════════════════════════════════════════
+
+    - name: Display versions
+      shell: bash
+      run: |
+        echo "🏗️ Terraform: $(terraform version -json | jq -r '.terraform_version')"
+        if command -v terragrunt &> /dev/null; then
+          echo "🌍 Terragrunt: $(terragrunt --version | head -1)"
+        fi
+        if command -v tflint &> /dev/null; then
+          echo "🔍 TFLint: $(tflint --version | head -1)"
+        fi

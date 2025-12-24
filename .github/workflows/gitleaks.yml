@@ -1,0 +1,179 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                         GITLEAKS SECRET SCANNING                             ║
+# ╠══════════════════════════════════════════════════════════════════════════════╣
+# ║  Scan repository for secrets and sensitive information using Gitleaks.       ║
+# ║  Prevents accidental commits of API keys, passwords, and tokens.             ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ USAGE                                                                       │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │                                                                             │
+# │   name: Secret Scanning                                                     │
+# │   on:                                                                       │
+# │     pull_request:                                                           │
+# │     push:                                                                   │
+# │       branches: [main, develop]                                             │
+# │                                                                             │
+# │   jobs:                                                                     │
+# │     scan:                                                                   │
+# │       uses: tsok-org/.github/.github/workflows/gitleaks.yml@main           │
+# │       secrets:                                                              │
+# │         gitleaks_license: ${{ secrets.GITLEAKS_LICENSE }}                  │
+# │                                                                             │
+# └─────────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ CUSTOM CONFIGURATION                                                        │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │ Create a .gitleaks.toml file in your repository to customize:               │
+# │                                                                             │
+# │   [extend]                                                                  │
+# │   useDefault = true                                                         │
+# │                                                                             │
+# │   [allowlist]                                                               │
+# │   paths = [                                                                 │
+# │     '''node_modules/''',                                                   │
+# │     '''\.git/''',                                                          │
+# │   ]                                                                         │
+# │                                                                             │
+# │   [[rules]]                                                                 │
+# │   id = "custom-api-key"                                                    │
+# │   description = "Custom API Key"                                           │
+# │   regex = '''my-api-key-[a-z0-9]{32}'''                                   │
+# │                                                                             │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
+name: Gitleaks Secret Scanning
+
+on:
+  workflow_call:
+    inputs:
+      config_path:
+        description: |
+          Path to custom Gitleaks configuration file.
+          Leave empty to use default configuration.
+        required: false
+        type: string
+        default: ""
+
+      scan_depth:
+        description: |
+          Number of commits to scan (0 = full history).
+          For PRs, this is automatically limited to changed commits.
+        required: false
+        type: number
+        default: 0
+
+      fail_on_leak:
+        description: |
+          Whether to fail the workflow if secrets are found.
+          Set to false for audit-only mode.
+        required: false
+        type: boolean
+        default: true
+
+      upload_sarif:
+        description: |
+          Whether to upload SARIF results to GitHub Security tab.
+          Requires GitHub Advanced Security.
+        required: false
+        type: boolean
+        default: false
+
+      enable_summary:
+        description: |
+          Whether to generate a job summary with scan results.
+        required: false
+        type: boolean
+        default: true
+
+    secrets:
+      gitleaks_license:
+        description: |
+          Gitleaks license key for enterprise features.
+          Optional - basic scanning works without license.
+        required: false
+
+jobs:
+  gitleaks:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      pull-requests: read
+      security-events: write  # For SARIF upload
+
+    steps:
+      # ════════════════════════════════════════════════════════════════════════
+      # 📥 CHECKOUT
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: ${{ inputs.scan_depth }}
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 🔍 RUN GITLEAKS SCAN
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Run Gitleaks
+        id: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.gitleaks_license }}
+          GITLEAKS_CONFIG: ${{ inputs.config_path }}
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 📤 UPLOAD SARIF (OPTIONAL)
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Upload SARIF
+        if: inputs.upload_sarif && always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+        continue-on-error: true
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 📊 SUMMARY
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Generate summary
+        if: inputs.enable_summary && always()
+        run: |
+          echo "## 🔍 Gitleaks Secret Scan" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.gitleaks.outcome }}" == "success" ]; then
+            echo "✅ **No secrets detected**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The repository has been scanned and no sensitive information was found." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ **Potential secrets detected**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Please review the findings and take appropriate action:" >> $GITHUB_STEP_SUMMARY
+            echo "1. If the secret is real, rotate it immediately" >> $GITHUB_STEP_SUMMARY
+            echo "2. Remove the secret from git history using \`git filter-branch\` or BFG" >> $GITHUB_STEP_SUMMARY
+            echo "3. If it's a false positive, add it to \`.gitleaks.toml\` allowlist" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Config Path | ${{ inputs.config_path || 'default' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Scan Depth | ${{ inputs.scan_depth == 0 && 'full history' || inputs.scan_depth }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Fail on Leak | ${{ inputs.fail_on_leak }} |" >> $GITHUB_STEP_SUMMARY
+
+      # ════════════════════════════════════════════════════════════════════════
+      # ❌ FAIL IF CONFIGURED
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Check for failures
+        if: inputs.fail_on_leak && steps.gitleaks.outcome == 'failure'
+        run: |
+          echo "::error::Secrets were detected in the repository. Please review and fix."
+          exit 1
