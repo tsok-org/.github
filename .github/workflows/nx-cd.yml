@@ -304,6 +304,26 @@ jobs:
       # - Docker image builds and pushes
       # - Any other configured publish targets
 
+      - name: Detect package manager
+        id: pkg-manager
+        run: |
+          if [ -f "bun.lockb" ] || [ -f "bun.lock" ]; then
+            echo "manager=bun" >> "$GITHUB_OUTPUT"
+            echo "📦 Detected: bun"
+          elif [ -f "pnpm-lock.yaml" ]; then
+            echo "manager=pnpm" >> "$GITHUB_OUTPUT"
+            echo "📦 Detected: pnpm"
+          elif [ -f "yarn.lock" ]; then
+            echo "manager=yarn" >> "$GITHUB_OUTPUT"
+            echo "📦 Detected: yarn"
+          elif [ -f "package-lock.json" ]; then
+            echo "manager=npm" >> "$GITHUB_OUTPUT"
+            echo "📦 Detected: npm"
+          else
+            echo "manager=npx" >> "$GITHUB_OUTPUT"
+            echo "📦 No lockfile found, using npx"
+          fi
+
       - name: Configure npm authentication
         if: secrets.npm_token != ''
         run: |
@@ -316,7 +336,16 @@ jobs:
         run: |
           echo "🚀 Running nx release..."
 
-          CMD="pnpm nx release --yes"
+          PKG_MGR="${{ steps.pkg-manager.outputs.manager }}"
+          
+          # Build the command based on package manager
+          case "$PKG_MGR" in
+            bun)   CMD="bun nx release --yes" ;;
+            pnpm)  CMD="pnpm nx release --yes" ;;
+            yarn)  CMD="yarn nx release --yes" ;;
+            npm)   CMD="npm exec nx release -- --yes" ;;
+            *)     CMD="npx nx release --yes" ;;
+          esac
 
           # First release mode (skip changelog comparison)
           if [ "${{ inputs.first_release }}" == "true" ]; then
