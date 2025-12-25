@@ -140,9 +140,11 @@ jobs:
       - name: Set token
         id: set-token
         run: |
-          if [ -n "${{ steps.app-token.outputs.token }}" ]; then
+          if [ "${{ steps.app-token.outcome }}" == "success" ]; then
+            echo "🔑 Using GitHub App token"
             echo "token=${{ steps.app-token.outputs.token }}" >> "$GITHUB_OUTPUT"
           else
+            echo "🔑 Using fallback token"
             echo "token=${{ secrets.gh_token || github.token }}" >> "$GITHUB_OUTPUT"
           fi
 
@@ -235,12 +237,10 @@ jobs:
 
       - name: Approve PR
         if: steps.check.outputs.should_merge == 'true'
-        continue-on-error: true
         run: |
           echo "👍 Approving PR #${{ github.event.pull_request.number }}..."
           gh pr review "${{ github.event.pull_request.number }}" --approve \
-            --body "🤖 Auto-approved by Dependabot Auto-Merge workflow (${{ steps.metadata.outputs.update-type }})" || \
-            echo "⚠️ Approval skipped - GitHub Actions may not have permission"
+            --body "🤖 Auto-approved by Dependabot Auto-Merge workflow (${{ steps.metadata.outputs.update-type }})"
         env:
           GITHUB_TOKEN: ${{ steps.set-token.outputs.token }}
 
