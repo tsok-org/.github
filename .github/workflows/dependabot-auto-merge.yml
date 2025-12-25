@@ -235,10 +235,12 @@ jobs:
 
       - name: Approve PR
         if: steps.check.outputs.should_merge == 'true'
+        continue-on-error: true
         run: |
           echo "👍 Approving PR #${{ github.event.pull_request.number }}..."
           gh pr review "${{ github.event.pull_request.number }}" --approve \
-            --body "🤖 Auto-approved by Dependabot Auto-Merge workflow (${{ steps.metadata.outputs.update-type }})"
+            --body "🤖 Auto-approved by Dependabot Auto-Merge workflow (${{ steps.metadata.outputs.update-type }})" || \
+            echo "⚠️ Approval skipped - GitHub Actions may not have permission"
         env:
           GITHUB_TOKEN: ${{ steps.set-token.outputs.token }}
 
