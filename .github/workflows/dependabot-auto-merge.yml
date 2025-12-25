@@ -118,7 +118,7 @@ on:
 
 jobs:
   dependabot-auto-merge:
-    name: Auto-Merge Dependabot PR
+    name: Enable Auto-Merge
     runs-on: ubuntu-latest
 
     # Only run for Dependabot PRs
