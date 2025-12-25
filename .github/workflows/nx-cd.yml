@@ -257,7 +257,7 @@ env:
 
 jobs:
   release:
-    name: Release
+    name: Version, Changelog, Publish
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: ${{ inputs.timeout_minutes }}
 
