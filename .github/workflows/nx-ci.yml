@@ -496,7 +496,6 @@ jobs:
 
             $CMD
           done
-
       # ════════════════════════════════════════════════════════════════════════
       # 📊 SUMMARY
       # ════════════════════════════════════════════════════════════════════════
@@ -504,36 +503,27 @@ jobs:
       - name: Job Summary
         if: always()
         run: |
-          echo "## 🔄 Nx CI Summary" >> $GITHUB_STEP_SUMMARY
+          echo "## CI Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-
-          echo "| Task | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
-
+          echo "| Task | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|:-----|:-------|" >> $GITHUB_STEP_SUMMARY
+          
           if [ "${{ inputs.lint }}" == "true" ]; then
-            LINT_STATUS="${{ steps.lint.outcome == 'success' && '✅ Passed' || steps.lint.outcome == 'failure' && '❌ Failed' || '⏭️ Skipped' }}"
-            echo "| Lint | $LINT_STATUS |" >> $GITHUB_STEP_SUMMARY
+            [[ "${{ steps.lint.outcome }}" == "success" ]] && S="✅" || S="❌"
+            echo "| Lint | ${S} |" >> $GITHUB_STEP_SUMMARY
           fi
-
+          
           if [ "${{ inputs.test }}" == "true" ]; then
-            TEST_STATUS="${{ steps.test.outcome == 'success' && '✅ Passed' || steps.test.outcome == 'failure' && '❌ Failed' || '⏭️ Skipped' }}"
-            echo "| Test | $TEST_STATUS |" >> $GITHUB_STEP_SUMMARY
+            [[ "${{ steps.test.outcome }}" == "success" ]] && S="✅" || S="❌"
+            echo "| Test | ${S} |" >> $GITHUB_STEP_SUMMARY
           fi
-
+          
           if [ "${{ inputs.build }}" == "true" ]; then
-            BUILD_STATUS="${{ steps.build.outcome == 'success' && '✅ Passed' || steps.build.outcome == 'failure' && '❌ Failed' || '⏭️ Skipped' }}"
-            echo "| Build | $BUILD_STATUS |" >> $GITHUB_STEP_SUMMARY
+            [[ "${{ steps.build.outcome }}" == "success" ]] && S="✅" || S="❌"
+            echo "| Build | ${S} |" >> $GITHUB_STEP_SUMMARY
           fi
-
+          
           if [ "${{ inputs.e2e }}" == "true" ]; then
-            E2E_STATUS="${{ steps.e2e.outcome == 'success' && '✅ Passed' || steps.e2e.outcome == 'failure' && '❌ Failed' || '⏭️ Skipped' }}"
-            echo "| E2E | $E2E_STATUS |" >> $GITHUB_STEP_SUMMARY
+            [[ "${{ steps.e2e.outcome }}" == "success" ]] && S="✅" || S="❌"
+            echo "| E2E | ${S} |" >> $GITHUB_STEP_SUMMARY
           fi
-
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Affected Only | ${{ inputs.affected_only }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Parallel | ${{ inputs.parallel }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Coverage | ${{ inputs.coverage }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Distribution | ${{ inputs.distribute_on || 'disabled' }} |" >> $GITHUB_STEP_SUMMARY

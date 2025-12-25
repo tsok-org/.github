@@ -472,7 +472,6 @@ jobs:
           DOCKER_PASSWORD: ${{ secrets.docker_password || github.token }}
           DOCKER_REGISTRY: ${{ inputs.docker_registry }}
           DOCKER_PLATFORMS: ${{ inputs.docker_platforms }}
-
       # ════════════════════════════════════════════════════════════════════════
       # 📊 SUMMARY
       # ════════════════════════════════════════════════════════════════════════
@@ -480,44 +479,21 @@ jobs:
       - name: Job Summary
         if: always()
         run: |
-          echo "## 🚀 Release Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
           if [ "${{ inputs.dry_run }}" == "true" ]; then
-            echo "⚠️ **DRY RUN** - No changes were published" >> $GITHUB_STEP_SUMMARY
+            echo "## ⚠️ Dry Run" >> $GITHUB_STEP_SUMMARY
+            echo "No changes published." >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ steps.release.outputs.released }}" == "true" ]; then
+            VERSION="${{ steps.release.outputs.version }}"
+            echo "## ✅ Released \`${VERSION}\`" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| | |" >> $GITHUB_STEP_SUMMARY
+            echo "|:--|:--|" >> $GITHUB_STEP_SUMMARY
+            echo "| **npm** | \`@${{ inputs.dist_tag }}\` |" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ inputs.publish_docker }}" == "true" ]; then
+              echo "| **Docker** | \`${{ inputs.docker_registry }}/${{ github.repository }}:${VERSION}\` |" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "| **Release** | [${{ github.repository }}@${VERSION}](${{ github.server_url }}/${{ github.repository }}/releases/tag/v${VERSION}) |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ⏭️ No Changes" >> $GITHUB_STEP_SUMMARY
+            echo "No releasable commits since last version." >> $GITHUB_STEP_SUMMARY
           fi
-
-          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Released | ${{ steps.release.outputs.released || 'unknown' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Version | ${{ steps.release.outputs.version || 'N/A' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Pre-ID | ${{ inputs.preid || '(stable)' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Dist Tag | ${{ inputs.dist_tag }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Prerelease | ${{ inputs.github_prerelease }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| First Release | ${{ inputs.first_release }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Docker | ${{ inputs.publish_docker }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          if [ "${{ inputs.publish_docker }}" == "true" ]; then
-            echo "### 🐳 Docker Configuration" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
-            echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-            echo "| Registry | ${{ inputs.docker_registry }} |" >> $GITHUB_STEP_SUMMARY
-            echo "| Platforms | ${{ inputs.docker_platforms }} |" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          echo "### 📝 What nx release handles" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "All publishing is configured in \`nx.json\`:" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Version bumping (per project, based on conventional commits)" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Changelog generation" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Git tagging" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ GitHub releases" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ npm publishing (with dist-tag: ${{ inputs.dist_tag }})" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ inputs.publish_docker }}" == "true" ]; then
-            echo "- ✅ Docker image builds & pushes" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "- ✅ Any other configured targets" >> $GITHUB_STEP_SUMMARY

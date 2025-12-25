@@ -137,7 +137,6 @@ jobs:
         with:
           sarif_file: results.sarif
         continue-on-error: true
-
       # ════════════════════════════════════════════════════════════════════════
       # 📊 SUMMARY
       # ════════════════════════════════════════════════════════════════════════
@@ -145,30 +144,14 @@ jobs:
       - name: Generate summary
         if: inputs.enable_summary && always()
         run: |
-          echo "## 🔍 Gitleaks Secret Scan" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
           if [ "${{ steps.gitleaks.outcome }}" == "success" ]; then
-            echo "✅ **No secrets detected**" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "The repository has been scanned and no sensitive information was found." >> $GITHUB_STEP_SUMMARY
+            echo "## ✅ No Secrets Detected" >> $GITHUB_STEP_SUMMARY
           else
-            echo "⚠️ **Potential secrets detected**" >> $GITHUB_STEP_SUMMARY
+            echo "## ⚠️ Secrets Detected" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "Please review the findings and take appropriate action:" >> $GITHUB_STEP_SUMMARY
-            echo "1. If the secret is real, rotate it immediately" >> $GITHUB_STEP_SUMMARY
-            echo "2. Remove the secret from git history using \`git filter-branch\` or BFG" >> $GITHUB_STEP_SUMMARY
-            echo "3. If it's a false positive, add it to \`.gitleaks.toml\` allowlist" >> $GITHUB_STEP_SUMMARY
+            echo "**Action required:** Rotate secrets, remove from git history, or allowlist false positives." >> $GITHUB_STEP_SUMMARY
           fi
 
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Config Path | ${{ inputs.config_path || 'default' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Scan Depth | ${{ inputs.scan_depth == 0 && 'full history' || inputs.scan_depth }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Fail on Leak | ${{ inputs.fail_on_leak }} |" >> $GITHUB_STEP_SUMMARY
-
-      # ════════════════════════════════════════════════════════════════════════
       # ❌ FAIL IF CONFIGURED
       # ════════════════════════════════════════════════════════════════════════
 

@@ -268,14 +268,17 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          echo "## 🤖 Dependabot Auto-Merge Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Package | ${{ steps.metadata.outputs.dependency-names }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Update Type | ${{ steps.metadata.outputs.update-type }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Ecosystem | ${{ steps.metadata.outputs.package-ecosystem }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| From Version | ${{ steps.metadata.outputs.previous-version }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| To Version | ${{ steps.metadata.outputs.new-version }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Should Merge | ${{ steps.check.outputs.should_merge }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Approve Only | ${{ inputs.approve_only }} |" >> $GITHUB_STEP_SUMMARY
+          PKG="${{ steps.metadata.outputs.dependency-names }}"
+          FROM="${{ steps.metadata.outputs.previous-version }}"
+          TO="${{ steps.metadata.outputs.new-version }}"
+          TYPE="${{ steps.metadata.outputs.update-type }}"
+          
+          if [ "${{ steps.check.outputs.should_merge }}" == "true" ]; then
+            echo "## ✅ Auto-Merge: \`${PKG}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "\`${FROM}\` → \`${TO}\` (${TYPE})" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ⏭️ Skipped: \`${PKG}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "\`${FROM}\` → \`${TO}\` (${TYPE}) - exceeds merge level" >> $GITHUB_STEP_SUMMARY
+          fi
