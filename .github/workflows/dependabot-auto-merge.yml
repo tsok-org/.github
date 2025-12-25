@@ -130,7 +130,7 @@ jobs:
       # ════════════════════════════════════════════════════════════════════════
 
       - name: Generate GitHub App Token
-        if: inputs.github_app_id != ''
+        if: inputs.github_app_id != '' && secrets.github_app_private_key != ''
         uses: actions/create-github-app-token@v1
         id: app-token
         with:
