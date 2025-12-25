@@ -129,8 +129,21 @@ jobs:
       # 🔐 AUTHENTICATION
       # ════════════════════════════════════════════════════════════════════════
 
+      - name: Check GitHub App credentials
+        id: check-app-creds
+        run: |
+          if [ -n "${{ inputs.github_app_id }}" ] && [ -n "$APP_PRIVATE_KEY" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "🔑 GitHub App credentials available"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "⚠️ GitHub App credentials not available, using default token"
+          fi
+        env:
+          APP_PRIVATE_KEY: ${{ secrets.github_app_private_key }}
+
       - name: Generate GitHub App Token
-        if: inputs.github_app_id != '' && secrets.github_app_private_key != ''
+        if: steps.check-app-creds.outputs.available == 'true'
         uses: actions/create-github-app-token@v1
         id: app-token
         with:
