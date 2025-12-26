@@ -252,8 +252,7 @@ jobs:
         if: steps.check.outputs.should_merge == 'true'
         run: |
           echo "👍 Approving PR #${{ github.event.pull_request.number }}..."
-          gh pr review "${{ github.event.pull_request.number }}" --approve \
-            --body "🤖 Auto-approved by Dependabot Auto-Merge workflow (${{ steps.metadata.outputs.update-type }})"
+          gh pr review "${{ github.event.pull_request.number }}" --approve
         env:
           GITHUB_TOKEN: ${{ steps.set-token.outputs.token }}
 
