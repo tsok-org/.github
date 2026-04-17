@@ -280,12 +280,20 @@ env:
   # Verbose diagnostic env: only set when the caller passes verbose: true.
   # Expressions resolve to '' (empty) when verbose is false, which for env
   # vars is treated as unset by cargo/nx.
+  #
+  # NOTE: we intentionally do NOT set NX_VERBOSE_LOGGING here. That env var
+  # causes Nx to print diagnostic lines like "[isolated-plugin] spawned
+  # worker ..." to stdout, which corrupts the JSON output of tooling calls
+  # like `nx show projects --json` that run inside this workflow (the
+  # "Get affected projects" step). Verbosity for the actual lint/test/build
+  # tasks is achieved by the `--verbose` CLI flag appended to those
+  # commands specifically (see below).
   RUST_BACKTRACE: ${{ inputs.verbose && '1' || '' }}
   CARGO_TERM_VERBOSE: ${{ inputs.verbose && 'true' || '' }}
   CARGO_TERM_COLOR: ${{ inputs.verbose && 'always' || '' }}
-  NX_VERBOSE_LOGGING: ${{ inputs.verbose && 'true' || '' }}
   # Disable terminal rewriting so per-task output survives in CI logs
-  # instead of getting collapsed into a single updating line.
+  # instead of getting collapsed into a single updating line. Doesn't
+  # affect JSON output of tooling calls.
   NX_TASKS_RUNNER_DYNAMIC_OUTPUT: ${{ inputs.verbose && 'false' || '' }}
 
 jobs:
