@@ -493,27 +493,43 @@ runs:
 
     - name: Rust diagnostics
       if: steps.config.outputs.setup_rust == 'true' && steps.config.outputs.rust_diagnostics == 'true'
+      # Diagnostics must NEVER fail the job — they are informational.
+      continue-on-error: true
       shell: bash
       run: |
+        # Use `|| true` on every individual command so a local failure
+        # (e.g. curl returning non-2xx, which is common for static landing
+        # pages that 403 non-browser clients) does not abort the script
+        # under `set -e`.
+        set +e
         echo "🦀 Rust environment diagnostics"
         echo "─────────────────────────────────"
         echo "Runner: ${{ runner.os }} / ${{ runner.arch }}"
-        echo "CPU: $(nproc) cores"
+        echo "CPU: $(nproc 2>/dev/null || echo unknown) cores"
         echo "Memory:"
-        free -h 2>/dev/null | sed 's/^/  /'
+        free -h 2>/dev/null | sed 's/^/  /' || echo "  (free unavailable)"
         echo "Disk (root):"
-        df -h / 2>/dev/null | sed 's/^/  /'
-        echo "Cargo: $(cargo --version 2>&1)"
+        df -h / 2>/dev/null | sed 's/^/  /' || echo "  (df unavailable)"
+        echo "Cargo: $(cargo --version 2>&1 || echo 'not on PATH')"
         echo "Rustup:"
-        rustup show 2>&1 | sed 's/^/  /'
-        echo "Network (ping crates.io):"
-        curl -sSfI -m 5 https://crates.io/ 2>&1 | head -3 | sed 's/^/  /'
+        rustup show 2>&1 | sed 's/^/  /' || echo "  (rustup unavailable)"
+        echo "Network (connectivity smoke test):"
+        # -o /dev/null: throw away body, only report status
+        # --write-out: print status code
+        # --max-time: hard 5s cap
+        # No -f flag, so non-2xx codes don't exit with 22
+        for host in https://crates.io/ https://static.rust-lang.org/ https://github.com/; do
+          CODE=$(curl -sS -o /dev/null --max-time 5 -w "%{http_code}" "$host" 2>&1 || echo "error")
+          echo "  $host → HTTP $CODE"
+        done
         if [[ -f Cargo.toml ]]; then
           echo "Cargo workspace members:"
           cargo metadata --no-deps --format-version 1 2>/dev/null \
-            | python3 -c "import sys, json; d = json.load(sys.stdin); print(*(f'  - {p[\"name\"]}' for p in d['packages']), sep='\n')" \
-            | head -40
+            | python3 -c "import sys, json; d = json.load(sys.stdin); print(*(f'  - {p[\"name\"]}' for p in d['packages']), sep='\n')" 2>/dev/null \
+            | head -40 || echo "  (cargo metadata unavailable)"
         fi
+        echo "─────────────────────────────────"
+        exit 0
 
     - name: Cache cargo registry + target
       if: steps.config.outputs.setup_rust == 'true' && steps.config.outputs.rust_cache == 'true'
