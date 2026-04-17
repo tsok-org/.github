@@ -221,6 +221,20 @@ on:
         type: number
         default: 30
 
+      verbose:
+        description: |
+          Verbose diagnostic logging for the CI run:
+          - appends --verbose to every `nx affected`/`run-many` invocation
+          - sets RUST_BACKTRACE=1 for stack traces on panics
+          - sets CARGO_TERM_VERBOSE=true so cargo prints per-unit build progress
+          - sets NX_VERBOSE_LOGGING=true and disables dynamic terminal rewriting
+            so CI logs preserve per-task output rather than collapsing it
+          Use sparingly — verbose output is expensive to scan and can exceed
+          GitHub's 10 MB/step log cap on large workspaces.
+        required: false
+        type: boolean
+        default: false
+
       # ─────────────────────────────────────────────────────────────────────────
       # GitHub App Authentication
       # ─────────────────────────────────────────────────────────────────────────
@@ -263,6 +277,16 @@ on:
 env:
   NX_CLOUD_ACCESS_TOKEN: ${{ secrets.nx_cloud_access_token }}
   NX_NO_CLOUD: ${{ inputs.nx_cloud_enabled == false && 'true' || '' }}
+  # Verbose diagnostic env: only set when the caller passes verbose: true.
+  # Expressions resolve to '' (empty) when verbose is false, which for env
+  # vars is treated as unset by cargo/nx.
+  RUST_BACKTRACE: ${{ inputs.verbose && '1' || '' }}
+  CARGO_TERM_VERBOSE: ${{ inputs.verbose && 'true' || '' }}
+  CARGO_TERM_COLOR: ${{ inputs.verbose && 'always' || '' }}
+  NX_VERBOSE_LOGGING: ${{ inputs.verbose && 'true' || '' }}
+  # Disable terminal rewriting so per-task output survives in CI logs
+  # instead of getting collapsed into a single updating line.
+  NX_TASKS_RUNNER_DYNAMIC_OUTPUT: ${{ inputs.verbose && 'false' || '' }}
 
 jobs:
   ci:
@@ -361,6 +385,10 @@ jobs:
             CMD="$CMD --exclude=${{ inputs.exclude_projects }}"
           fi
 
+          if [ "${{ inputs.verbose }}" == "true" ]; then
+            CMD="$CMD --verbose"
+          fi
+
           echo "Running: $CMD"
           $CMD
 
@@ -389,6 +417,10 @@ jobs:
 
           if [ -n "${{ inputs.exclude_projects }}" ]; then
             CMD="$CMD --exclude=${{ inputs.exclude_projects }}"
+          fi
+
+          if [ "${{ inputs.verbose }}" == "true" ]; then
+            CMD="$CMD --verbose"
           fi
 
           echo "Running: $CMD"
@@ -437,6 +469,10 @@ jobs:
             CMD="$CMD --exclude=${{ inputs.exclude_projects }}"
           fi
 
+          if [ "${{ inputs.verbose }}" == "true" ]; then
+            CMD="$CMD --verbose"
+          fi
+
           echo "Running: $CMD"
           $CMD
 
@@ -461,6 +497,10 @@ jobs:
 
           if [ -n "${{ inputs.exclude_projects }}" ]; then
             CMD="$CMD --exclude=${{ inputs.exclude_projects }}"
+          fi
+
+          if [ "${{ inputs.verbose }}" == "true" ]; then
+            CMD="$CMD --verbose"
           fi
 
           echo "Running: $CMD"
