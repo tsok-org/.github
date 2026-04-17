@@ -193,6 +193,7 @@ runs:
           echo "setup_terraform=false" >> "$GITHUB_OUTPUT"
           echo "setup_docker=false" >> "$GITHUB_OUTPUT"
           echo "setup_services=false" >> "$GITHUB_OUTPUT"
+          echo "setup_system_packages=false" >> "$GITHUB_OUTPUT"
           exit 0
         fi
         
@@ -341,6 +342,25 @@ runs:
         fi
         
         # ────────────────────────────────────────────────────────────────────────
+        # Parse System Packages (apt-installed Linux packages)
+        # ────────────────────────────────────────────────────────────────────────
+        # Schema in .environment.yml:
+        #   system_packages:
+        #     - libcurl4-openssl-dev
+        #     - libssl-dev
+        #     - cmake
+        # Resolved via `sudo apt-get install -y ...` on Linux runners.
+        # Skipped with a warning on non-Linux (macOS/Windows).
+        SYSTEM_PACKAGES=$(yq -e '.system_packages // [] | join(" ")' "$CONFIG_FILE" 2>/dev/null || echo "")
+        if [[ -n "$SYSTEM_PACKAGES" ]] && should_setup "system_packages"; then
+          echo "setup_system_packages=true" >> "$GITHUB_OUTPUT"
+          echo "system_packages=$SYSTEM_PACKAGES" >> "$GITHUB_OUTPUT"
+          echo "  ✓ System packages: $SYSTEM_PACKAGES"
+        else
+          echo "setup_system_packages=false" >> "$GITHUB_OUTPUT"
+        fi
+
+        # ────────────────────────────────────────────────────────────────────────
         # Parse Services configuration
         # ────────────────────────────────────────────────────────────────────────
         SERVICES_CONFIG=$(yq -e '.services // {}' "$CONFIG_FILE" 2>/dev/null || echo "{}")
@@ -417,6 +437,28 @@ runs:
         terraform_version: ${{ steps.config.outputs.terraform_version }}
         terragrunt_version: ${{ steps.config.outputs.terragrunt_version }}
         tflint: ${{ steps.config.outputs.tflint_enabled }}
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 📦 SYSTEM PACKAGES (apt on Linux)
+    # ══════════════════════════════════════════════════════════════════════════
+    # Installs OS-level packages listed in .environment.yml's `system_packages`.
+    # Typical use: C/C++ build-time deps needed by Rust `*-sys` crates (e.g.
+    # `libcurl4-openssl-dev` for `rdkafka-sys`, `libssl-dev` for `openssl-sys`).
+    # Runs before Docker setup so downstream build steps see the headers.
+
+    - name: Install system packages (apt)
+      if: steps.config.outputs.setup_system_packages == 'true' && runner.os == 'Linux'
+      shell: bash
+      run: |
+        echo "📦 Installing apt packages: ${{ steps.config.outputs.system_packages }}"
+        sudo apt-get update -y
+        sudo apt-get install -y --no-install-recommends ${{ steps.config.outputs.system_packages }}
+
+    - name: Warn on non-Linux system_packages request
+      if: steps.config.outputs.setup_system_packages == 'true' && runner.os != 'Linux'
+      shell: bash
+      run: |
+        echo "::warning::system_packages is only supported on Linux runners; ignoring on ${{ runner.os }}."
 
     # ══════════════════════════════════════════════════════════════════════════
     # 🐳 DOCKER SETUP
@@ -583,4 +625,8 @@ runs:
         
         if [[ "${{ steps.config.outputs.setup_services }}" == "true" ]]; then
           echo "| Services | ✅ ${{ steps.config.outputs.service_names }} |" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        if [[ "${{ steps.config.outputs.setup_system_packages }}" == "true" ]]; then
+          echo "| System packages (apt) | ✅ ${{ steps.config.outputs.system_packages }} |" >> $GITHUB_STEP_SUMMARY
         fi
