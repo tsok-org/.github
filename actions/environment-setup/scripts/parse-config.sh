@@ -84,11 +84,12 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
     out "setup_python=false"
     out "setup_terraform=false"
     out "setup_docker=false"
-    out "setup_services=false"
     out "setup_system_packages=false"
     out "setup_rust=false"
     out "setup_go=false"
     out "setup_c=false"
+    out "service_redis=false"
+    out "service_nats=false"
     exit 0
 fi
 
@@ -338,40 +339,17 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# Services
+# services — external daemon binaries installed on PATH so tests can spawn
+# them as subprocesses. (Previously split into a docker-container `services`
+# block + a `test_binaries` block; unified here because nobody was using the
+# container variant and the split confused consumers.)
 # ------------------------------------------------------------------------------
-SERVICES_CONFIG=$(yq_get '.services // {}' "{}")
-
-if [[ "$SERVICES_CONFIG" != "{}" ]] && should_setup "services"; then
-    out "setup_services=true"
-
-    SERVICE_NAMES=$(yq_get '.services | keys | join(",")' "")
-    out "service_names=$SERVICE_NAMES"
-
-    # Emit services JSON as a multi-line output.
-    SERVICES_JSON=$(yq -e '.services' -o=json "$CONFIG_FILE" 2>/dev/null || printf '{}')
-    {
-        printf 'services_json<<EOF\n'
-        printf '%s\n' "$SERVICES_JSON"
-        printf 'EOF\n'
-    } >>"$GITHUB_OUTPUT"
-
-    echo "  ✓ Services: $SERVICE_NAMES"
-else
-    out "setup_services=false"
-    out "service_names="
-fi
-
-# ------------------------------------------------------------------------------
-# test_binaries — external daemons installed on PATH for tests that spawn them
-# as subprocesses (distinct from the docker-based `services` block above).
-# ------------------------------------------------------------------------------
-TB_REDIS=$(yq_get '.test_binaries.redis' "false")
-TB_NATS=$(yq_get '.test_binaries.nats' "false")
-out "test_binary_redis=$TB_REDIS"
-out "test_binary_nats=$TB_NATS"
-if [[ "$TB_REDIS" == "true" || "$TB_NATS" == "true" ]]; then
-    echo "  ✓ Test binaries: redis=$TB_REDIS, nats=$TB_NATS"
+SVC_REDIS=$(yq_get '.services.redis' "false")
+SVC_NATS=$(yq_get '.services.nats' "false")
+out "service_redis=$SVC_REDIS"
+out "service_nats=$SVC_NATS"
+if [[ "$SVC_REDIS" == "true" || "$SVC_NATS" == "true" ]]; then
+    echo "  ✓ Services: redis=$SVC_REDIS, nats=$SVC_NATS"
 fi
 
 echo "✅ Configuration parsed successfully"

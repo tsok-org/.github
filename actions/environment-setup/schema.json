@@ -173,51 +173,18 @@
       ]
     },
 
-    "test_binaries": {
+    "services": {
       "type": "object",
-      "description": "Install external daemon binaries onto the runner's PATH so tests can spawn them as subprocesses. Distinct from `services` (which runs containerized daemons). Each key toggles a specific binary.",
+      "description": "External daemons installed onto the runner's PATH so tests can spawn them as subprocesses (via Command::new(\"redis-server\") etc.). Each key toggles a specific service binary. Linux runners only for now.",
       "additionalProperties": false,
       "properties": {
         "redis": {
           "type": "boolean",
-          "description": "Install `redis-server` via apt (Linux only). Tests typically spawn it via `Command::new(\"redis-server\")`."
+          "description": "Install `redis-server` via apt. Auto-start disabled — tests control lifecycle."
         },
         "nats": {
           "type": "boolean",
-          "description": "Install `nats-server` by downloading the latest stable release from github.com/nats-io/nats-server. Tests typically spawn it via `Command::new(\"nats-server\")`. Linux runners only for now."
-        }
-      }
-    },
-
-    "services": {
-      "type": "object",
-      "description": "Service containers to start on the runner. Keys are user-chosen names (postgres, redis, nats, ...). Auth env vars (POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, REDIS_PASSWORD, MYSQL_*) come from the calling workflow's env block.",
-      "additionalProperties": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "image": {
-            "type": "string",
-            "description": "Container image (tag included). Defaults to a per-service sensible image if omitted."
-          },
-          "port": {
-            "type": ["integer", "string"],
-            "description": "Port to publish. Mapped 1:1 (host:container)."
-          },
-          "env": {
-            "type": "object",
-            "description": "Key/value env vars passed via -e.",
-            "additionalProperties": { "type": ["string", "number", "boolean"] }
-          },
-          "args": {
-            "type": "array",
-            "items": { "type": "string" },
-            "description": "Extra positional args appended to `docker run`."
-          },
-          "healthcheck": {
-            "type": "string",
-            "description": "Optional healthcheck command. Currently informational."
-          }
+          "description": "Install `nats-server` by downloading the latest stable release from github.com/nats-io/nats-server."
         }
       }
     },
