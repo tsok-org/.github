@@ -394,6 +394,20 @@ runs:
       with:
         tool: cargo-llvm-cov
 
+    - name: Setup sccache (compiler cache, GitHub Actions backend)
+      if: steps.config.outputs.setup_rust == 'true' && steps.config.outputs.rust_sccache == 'true'
+      # mozilla-actions/sccache-action installs the sccache binary and sets
+      # the env vars cargo needs: RUSTC_WRAPPER=sccache + SCCACHE_GHA_ENABLED=true.
+      # The GitHub Actions cache is used as the backend — no external storage
+      # required, scoped per-repo. Complements Swatinem/rust-cache: rust-cache
+      # restores target/ wholesale, sccache fills in per-object gaps when a
+      # partial rebuild is triggered (dep bump, profile change, etc.).
+      #
+      # Requires CARGO_INCREMENTAL=0 in the environment (sccache warns and
+      # silently bypasses when incremental is on). nx-ci.yml sets this by
+      # default; standalone consumers should ensure it's set in their env.
+      uses: mozilla-actions/sccache-action@v0.0.9
+
     - name: Apply Rust build knobs (CARGO_BUILD_JOBS, linker)
       if: steps.config.outputs.setup_rust == 'true'
       shell: bash
