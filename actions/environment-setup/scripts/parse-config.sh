@@ -362,4 +362,16 @@ else
     out "service_names="
 fi
 
+# ------------------------------------------------------------------------------
+# test_binaries — external daemons installed on PATH for tests that spawn them
+# as subprocesses (distinct from the docker-based `services` block above).
+# ------------------------------------------------------------------------------
+TB_REDIS=$(yq_get '.test_binaries.redis' "false")
+TB_NATS=$(yq_get '.test_binaries.nats' "false")
+out "test_binary_redis=$TB_REDIS"
+out "test_binary_nats=$TB_NATS"
+if [[ "$TB_REDIS" == "true" || "$TB_NATS" == "true" ]]; then
+    echo "  ✓ Test binaries: redis=$TB_REDIS, nats=$TB_NATS"
+fi
+
 echo "✅ Configuration parsed successfully"
