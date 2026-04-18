@@ -173,6 +173,11 @@
       ]
     },
 
+    "free_disk_space": {
+      "type": "boolean",
+      "description": "Free ~10–14 GB by purging pre-installed runner images content (Android SDK, .NET, Haskell, Docker images we won't use, etc.) via jlumbroso/free-disk-space. Runs first in the setup flow before any other step. Linux runners only."
+    },
+
     "services": {
       "type": "object",
       "description": "External daemons installed onto the runner's PATH so tests can spawn them as subprocesses (via Command::new(\"redis-server\") etc.). Each key toggles a specific service binary. Linux runners only for now.",
