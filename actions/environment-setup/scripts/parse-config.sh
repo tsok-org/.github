@@ -250,12 +250,14 @@ if [[ "$RUST_CONFIG" != "false" ]] && should_setup "rust"; then
     RUST_JOBS=$(yq_get '.rust.build_jobs // ""' "")
     RUST_LINKER=$(yq_get '.rust.linker // ""' "")
     RUST_COVERAGE=$(yq_get '.rust.coverage' "false")
+    RUST_SCCACHE=$(yq_get '.rust.sccache' "false")
     out "rust_cache=$RUST_CACHE"
     out "rust_diagnostics=$RUST_DIAG"
     out "rust_build_jobs=$RUST_JOBS"
     out "rust_linker=$RUST_LINKER"
     out "rust_coverage=$RUST_COVERAGE"
-    echo "  ✓ Rust: cache=$RUST_CACHE, diagnostics=$RUST_DIAG, build_jobs=${RUST_JOBS:-auto}, linker=${RUST_LINKER:-default}, coverage=$RUST_COVERAGE"
+    out "rust_sccache=$RUST_SCCACHE"
+    echo "  ✓ Rust: cache=$RUST_CACHE, diagnostics=$RUST_DIAG, build_jobs=${RUST_JOBS:-auto}, linker=${RUST_LINKER:-default}, coverage=$RUST_COVERAGE, sccache=$RUST_SCCACHE"
 else
     out "setup_rust=false"
 fi
