@@ -405,31 +405,44 @@ runs:
           echo "CARGO_BUILD_JOBS=$JOBS" >> "$GITHUB_ENV"
         fi
         if [[ -n "$LINKER" ]]; then
-          case "$LINKER" in
-            lld)
-              echo "🦀 Using lld linker (memory-lighter than GNU ld)"
-              # Ensure lld is installed; it ships with llvm-tools-preview in rustup
-              if ! command -v ld.lld >/dev/null 2>&1; then
-                sudo apt-get install -y --no-install-recommends lld
-              fi
-              # Apply via RUSTFLAGS so every link phase uses lld
-              CUR="${RUSTFLAGS:-}"
-              NEW="-C link-arg=-fuse-ld=lld"
-              echo "RUSTFLAGS=${CUR}${CUR:+ }${NEW}" >> "$GITHUB_ENV"
-              ;;
-            mold)
-              echo "🦀 Using mold linker (fastest + smallest memory)"
-              if ! command -v mold >/dev/null 2>&1; then
-                sudo apt-get install -y --no-install-recommends mold
-              fi
-              CUR="${RUSTFLAGS:-}"
-              NEW="-C link-arg=-fuse-ld=mold"
-              echo "RUSTFLAGS=${CUR}${CUR:+ }${NEW}" >> "$GITHUB_ENV"
-              ;;
+          # Linker flags must be scoped to the HOST target only — setting
+          # the global RUSTFLAGS propagates to cross-compile targets
+          # (wasm32-wasip2, aarch64-*, etc.) whose linkers (e.g. wasm-
+          # component-ld) reject `-fuse-ld=...` with "unexpected argument
+          # '-f'". Use CARGO_TARGET_<TRIPLE>_RUSTFLAGS instead, which cargo
+          # applies only when building for that specific target.
+          case "${{ runner.arch }}" in
+            X64)   HOST_TRIPLE="x86_64-unknown-linux-gnu" ;;
+            ARM64) HOST_TRIPLE="aarch64-unknown-linux-gnu" ;;
             *)
-              echo "::warning::Unknown rust.linker '$LINKER'; ignoring. Supported: lld, mold."
+              echo "::warning::Unknown runner.arch='${{ runner.arch }}'; rust.linker ignored."
+              HOST_TRIPLE=""
               ;;
           esac
+          if [[ -n "$HOST_TRIPLE" ]]; then
+            # CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS, etc.
+            HOST_ENV_KEY="CARGO_TARGET_$(echo "$HOST_TRIPLE" | tr '[:lower:]-' '[:upper:]_')_RUSTFLAGS"
+            case "$LINKER" in
+              lld)
+                echo "🦀 Using lld linker (memory-lighter than GNU ld) for $HOST_TRIPLE"
+                # Ensure lld is installed; ships with llvm-tools-preview in rustup
+                if ! command -v ld.lld >/dev/null 2>&1; then
+                  sudo apt-get install -y --no-install-recommends lld
+                fi
+                echo "${HOST_ENV_KEY}=-C link-arg=-fuse-ld=lld" >> "$GITHUB_ENV"
+                ;;
+              mold)
+                echo "🦀 Using mold linker (fastest + smallest memory) for $HOST_TRIPLE"
+                if ! command -v mold >/dev/null 2>&1; then
+                  sudo apt-get install -y --no-install-recommends mold
+                fi
+                echo "${HOST_ENV_KEY}=-C link-arg=-fuse-ld=mold" >> "$GITHUB_ENV"
+                ;;
+              *)
+                echo "::warning::Unknown rust.linker '$LINKER'; ignoring. Supported: lld, mold."
+                ;;
+            esac
+          fi
         fi
 
     # ══════════════════════════════════════════════════════════════════════════
