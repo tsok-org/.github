@@ -305,6 +305,11 @@ jobs:
 
       - name: Assert action short-circuited cleanly
         if: matrix.fixture.expect == 'pass'
+        # Pass outputs through env rather than inline-interpolating JSON into
+        # a bash string — the inline form breaks on the embedded double-quotes
+        # in the JSON payload ("setup_node": "false" etc.).
+        env:
+          OUTPUTS_JSON: ${{ toJSON(steps.env_setup.outputs) }}
         run: |
           set -euo pipefail
           # With everything skipped, the parser emits setup_*=false for every
@@ -314,10 +319,7 @@ jobs:
           for key in setup_node setup_python setup_rust setup_go setup_c \
                      setup_docker setup_terraform setup_services \
                      setup_system_packages; do
-            val="${{ toJSON(steps.env_setup.outputs) }}"
-            # Inline per-key check; we use the direct output accessor which
-            # GitHub resolves at runtime for each key name.
-            actual=$(jq -r --arg k "$key" '.[$k] // "<missing>"' <<<"$val")
+            actual=$(jq -r --arg k "$key" '.[$k] // "<missing>"' <<<"$OUTPUTS_JSON")
             if [[ "$actual" != "false" ]]; then
               echo "::error::Expected $key=false (skipped), got $actual"
               fail=1
