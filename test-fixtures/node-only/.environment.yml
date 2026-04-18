@@ -1,0 +1,5 @@
+version: "1"
+node:
+  version: "20"
+  package_manager: pnpm
+  install: true

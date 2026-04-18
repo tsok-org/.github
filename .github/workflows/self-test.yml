@@ -1,0 +1,327 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                         SELF-TEST (DOGFOOD) WORKFLOW                         ║
+# ╠══════════════════════════════════════════════════════════════════════════════╣
+# ║  Runs the repo's own `actions/environment-setup` action against a matrix     ║
+# ║  of test fixtures under `test-fixtures/` on every PR. Guards against         ║
+# ║  regressions in the parser, schema, and component wiring before they ship    ║
+# ║  to consumers (mcpg-dev, nx-cd, ...).                                        ║
+# ║                                                                              ║
+# ║  Why this exists:                                                            ║
+# ║    • Item #7 of the implementation critique: "no tests — the repo doesn't    ║
+# ║      run its own actions". Bugs like `CARGO_TERM_VERBOSE=""` rejection and   ║
+# ║      missing `system_packages` support shipped because there was no          ║
+# ║      pre-merge validation.                                                   ║
+# ║    • Commit f2e0d9f extracted a 270-line bash parser to scripts/ and added   ║
+# ║      a JSON Schema. This workflow pins that contract before further changes  ║
+# ║      layer on top.                                                           ║
+# ║                                                                              ║
+# ║  How it stays fast:                                                          ║
+# ║    • The parser script is invoked directly to read expected outputs — no     ║
+# ║      toolchain provisioning, just a yq + bash parse (~1s per fixture).       ║
+# ║    • The composite action is then invoked end-to-end with every heavy        ║
+# ║      component skipped. The `skip:` list is honored by parse-config.sh,      ║
+# ║      so each component short-circuits to a no-op and we still exercise the   ║
+# ║      full action wiring (validator, parser, env-var guard, summary).         ║
+# ║    • `fail-validation` fixtures only run the schema validator and assert it  ║
+# ║      rejects the input.                                                      ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+name: Self-Test (environment-setup)
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: self-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fixture:
+    name: ${{ matrix.fixture.name }} (${{ matrix.fixture.expect }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        fixture:
+          - name: rust-nx-monorepo
+            expect: pass
+          - name: node-only
+            expect: pass
+          - name: python-poetry
+            expect: pass
+          - name: polyglot
+            expect: pass
+          - name: invalid-version
+            expect: fail-validation
+          - name: invalid-rust-linker
+            expect: fail-validation
+
+    steps:
+      # ────────────────────────────────────────────────────────────────────────
+      # Checkout the PR branch. We intentionally test the branch's code, not
+      # @main, so the action change under review is what gets exercised.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ────────────────────────────────────────────────────────────────────────
+      # The action reads `.environment.yml` from `working_directory` (default
+      # `.`). Fixtures live under `test-fixtures/<name>/.environment.yml`;
+      # copy the selected one to the workspace root. This is the cheapest way
+      # to exercise the action's real file-discovery path without teaching it
+      # about fixtures.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Stage fixture at workspace root
+        run: |
+          set -euo pipefail
+          src="test-fixtures/${{ matrix.fixture.name }}/.environment.yml"
+          if [[ ! -f "$src" ]]; then
+            echo "::error::Fixture file missing: $src"
+            exit 1
+          fi
+          cp "$src" .environment.yml
+          echo "Staged fixture: $src"
+          echo "─── .environment.yml ──────────────────────────────────"
+          sed 's/^/  /' .environment.yml
+
+      # ════════════════════════════════════════════════════════════════════════
+      # fail-validation branch
+      # ------------------------------------------------------------------------
+      # Run check-jsonschema directly (the same tool the action uses) and
+      # require a NON-zero exit. If it passes, the schema isn't enforcing its
+      # constraints and we want a loud failure.
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Install check-jsonschema
+        if: matrix.fixture.expect == 'fail-validation'
+        run: |
+          pip install --user --quiet check-jsonschema
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run validator (expected to FAIL)
+        id: validate_bad
+        if: matrix.fixture.expect == 'fail-validation'
+        continue-on-error: true
+        run: |
+          check-jsonschema \
+            --schemafile actions/environment-setup/schema.json \
+            .environment.yml
+
+      - name: Assert validator rejected the fixture
+        if: matrix.fixture.expect == 'fail-validation'
+        run: |
+          set -euo pipefail
+          outcome="${{ steps.validate_bad.outcome }}"
+          echo "Validator outcome: $outcome"
+          if [[ "$outcome" != "failure" ]]; then
+            echo "::error::Fixture ${{ matrix.fixture.name }} was expected to FAIL schema validation but it passed (outcome=$outcome)."
+            echo "::error::Either the schema is too permissive, or the fixture no longer violates it. Investigate before merging."
+            exit 1
+          fi
+          echo "Validator correctly rejected ${{ matrix.fixture.name }}."
+
+      # ════════════════════════════════════════════════════════════════════════
+      # pass branch — direct parser invocation
+      # ------------------------------------------------------------------------
+      # Before running the composite (which will skip everything), run the
+      # parser script DIRECTLY against the fixture with no skip list. This
+      # captures the *real* setup_* outputs each fixture should produce and
+      # lets us assert them. A regression in the parser's per-component branch
+      # will show up here.
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Ensure yq is installed
+        if: matrix.fixture.expect == 'pass'
+        run: |
+          set -euo pipefail
+          if ! command -v yq >/dev/null 2>&1; then
+            # Ubuntu runners ship mikefarah/yq at /usr/bin/yq; this is a safety
+            # net for runners that don't. Pin a recent v4.x.
+            sudo curl -fsSL -o /usr/local/bin/yq \
+              https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          fi
+          yq --version
+
+      - name: Parse fixture directly
+        if: matrix.fixture.expect == 'pass'
+        id: direct_parse
+        env:
+          SKIP_COMPONENTS: ""
+          ONLY_COMPONENTS: ""
+        run: |
+          set -euo pipefail
+          # Run parser; its normal target is $GITHUB_OUTPUT. We redirect to a
+          # file we own so we can grep it without clobbering the step's real
+          # outputs contract.
+          out="$RUNNER_TEMP/parsed.env"
+          : > "$out"
+          GITHUB_OUTPUT="$out" \
+            bash actions/environment-setup/scripts/parse-config.sh .environment.yml
+          echo "─── parsed outputs ────────────────────────────────────"
+          sed 's/^/  /' "$out"
+          echo "parsed_file=$out" >> "$GITHUB_OUTPUT"
+
+      # Per-fixture assertions on the DIRECT parse output. Uses grep -Fx on
+      # literal "key=value" lines, which is what parse-config.sh emits.
+      - name: Assert outputs (rust-nx-monorepo)
+        if: matrix.fixture.expect == 'pass' && matrix.fixture.name == 'rust-nx-monorepo'
+        run: |
+          set -euo pipefail
+          out="${{ steps.direct_parse.outputs.parsed_file }}"
+          assert() {
+            if ! grep -Fxq "$1" "$out"; then
+              echo "::error::Expected output line not found: $1"
+              echo "Actual outputs:"; sed 's/^/  /' "$out"
+              exit 1
+            fi
+          }
+          assert "has_config=true"
+          assert "setup_node=true"
+          assert "node_version_file=.node-version"
+          assert "setup_rust=true"
+          assert "rust_cache=true"
+          assert "rust_diagnostics=true"
+          assert "rust_coverage=true"
+          assert "rust_build_jobs=1"
+          assert "setup_docker=true"
+          assert "docker_buildx=true"
+          assert "docker_platforms=linux/amd64,linux/arm64"
+          assert "docker_registry=ghcr.io"
+          assert "setup_system_packages=true"
+          assert "system_packages=libcurl4-openssl-dev libssl-dev pkg-config"
+          # Runtimes NOT declared — must stay off.
+          assert "setup_python=false"
+          assert "setup_go=false"
+          assert "setup_c=false"
+          assert "setup_terraform=false"
+          echo "rust-nx-monorepo: parser output matches expected baseline."
+
+      - name: Assert outputs (node-only)
+        if: matrix.fixture.expect == 'pass' && matrix.fixture.name == 'node-only'
+        run: |
+          set -euo pipefail
+          out="${{ steps.direct_parse.outputs.parsed_file }}"
+          assert() {
+            if ! grep -Fxq "$1" "$out"; then
+              echo "::error::Expected output line not found: $1"
+              echo "Actual outputs:"; sed 's/^/  /' "$out"
+              exit 1
+            fi
+          }
+          assert "has_config=true"
+          assert "setup_node=true"
+          assert "node_version_explicit=20"
+          assert "node_install=true"
+          # Everything else off.
+          assert "setup_python=false"
+          assert "setup_rust=false"
+          assert "setup_go=false"
+          assert "setup_c=false"
+          assert "setup_docker=false"
+          assert "setup_terraform=false"
+          assert "setup_system_packages=false"
+          assert "setup_services=false"
+          echo "node-only: single-language path clean."
+
+      - name: Assert outputs (python-poetry)
+        if: matrix.fixture.expect == 'pass' && matrix.fixture.name == 'python-poetry'
+        run: |
+          set -euo pipefail
+          out="${{ steps.direct_parse.outputs.parsed_file }}"
+          assert() {
+            if ! grep -Fxq "$1" "$out"; then
+              echo "::error::Expected output line not found: $1"
+              echo "Actual outputs:"; sed 's/^/  /' "$out"
+              exit 1
+            fi
+          }
+          assert "setup_python=true"
+          assert "python_version=3.12"
+          assert "python_package_manager=poetry"
+          assert "setup_node=false"
+          assert "setup_rust=false"
+          echo "python-poetry: poetry branch wired correctly."
+
+      - name: Assert outputs (polyglot)
+        if: matrix.fixture.expect == 'pass' && matrix.fixture.name == 'polyglot'
+        run: |
+          set -euo pipefail
+          out="${{ steps.direct_parse.outputs.parsed_file }}"
+          assert() {
+            if ! grep -Fxq "$1" "$out"; then
+              echo "::error::Expected output line not found: $1"
+              echo "Actual outputs:"; sed 's/^/  /' "$out"
+              exit 1
+            fi
+          }
+          # Rust on, coverage explicitly off (guards default drift).
+          assert "setup_rust=true"
+          assert "rust_cache=true"
+          assert "rust_coverage=false"
+          # Go path (added in f2e0d9f).
+          assert "setup_go=true"
+          assert "go_version=1.22"
+          assert "go_cache=true"
+          # C toolchain path (added in f2e0d9f): gcc → build-essential, plus
+          # cmake, pkg-config, and extra packages.
+          assert "setup_c=true"
+          assert "c_toolchain=gcc"
+          assert "c_packages=build-essential cmake pkg-config libpq-dev"
+          # Node with install:false — guards the flag actually flows through.
+          assert "setup_node=true"
+          assert "node_install=false"
+          echo "polyglot: go, c, and install:false branches all wired."
+
+      # ════════════════════════════════════════════════════════════════════════
+      # pass branch — end-to-end action invocation (smoke test)
+      # ------------------------------------------------------------------------
+      # Now run the real composite action. We skip every component, so each
+      # install step short-circuits to a no-op. What still runs:
+      #   • GitHub App token plumbing (no creds → falls back to github_token).
+      #   • Schema validation (re-runs; should pass on all "pass" fixtures).
+      #   • Parser (re-runs, with skip= this time; setup_*=false everywhere).
+      #   • The CARGO_TERM_* env guard (guarded by setup_rust; inactive here).
+      #   • Summary step (prints nothing for disabled components).
+      # This catches wiring regressions: missing inputs, bad `if:` guards,
+      # schema file path drift, etc.
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Run environment-setup end-to-end (all skipped)
+        if: matrix.fixture.expect == 'pass'
+        id: env_setup
+        uses: ./actions/environment-setup
+        with:
+          skip: node,python,terraform,docker,services,system_packages,rust,go,c
+
+      - name: Assert action short-circuited cleanly
+        if: matrix.fixture.expect == 'pass'
+        run: |
+          set -euo pipefail
+          # With everything skipped, the parser emits setup_*=false for every
+          # component. If any comes back true, the skip list isn't being
+          # honored for that component (regression).
+          fail=0
+          for key in setup_node setup_python setup_rust setup_go setup_c \
+                     setup_docker setup_terraform setup_services \
+                     setup_system_packages; do
+            val="${{ toJSON(steps.env_setup.outputs) }}"
+            # Inline per-key check; we use the direct output accessor which
+            # GitHub resolves at runtime for each key name.
+            actual=$(jq -r --arg k "$key" '.[$k] // "<missing>"' <<<"$val")
+            if [[ "$actual" != "false" ]]; then
+              echo "::error::Expected $key=false (skipped), got $actual"
+              fail=1
+            fi
+          done
+          [[ "$fail" -eq 0 ]]
+          echo "End-to-end smoke passed: skip list honored for every component."
