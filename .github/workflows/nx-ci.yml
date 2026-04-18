@@ -437,24 +437,12 @@ jobs:
             CMD="$CMD run-many"
           fi
 
-          # Always run `test` on every affected project so no crate is skipped.
-          # When coverage: true, ALSO run `test:coverage` on any project that
-          # has that target defined — that's the project-specific instrumented
-          # test run (e.g. `cargo llvm-cov` for Rust) which produces lcov.info.
-          #
-          # Nx's comma-separated target list runs both in one invocation;
-          # projects without `test:coverage` just skip that half. A project
-          # like Rust's mcpg with both targets will run tests twice — once
-          # plain and once instrumented — which is fast and correct.
-          #
-          # Prior behavior replaced `test` with `test:coverage` when coverage
-          # was true; that silently skipped every crate without a dedicated
-          # coverage target (e.g. 27 of 28 crates in the MCPG workspace).
-          if [ "${{ inputs.coverage }}" == "true" ]; then
-            CMD="$CMD -t test,test:coverage --parallel=${{ inputs.parallel }}"
-          else
-            CMD="$CMD -t test --parallel=${{ inputs.parallel }}"
-          fi
+          # One unified `test` target per project. Coverage is a property of
+          # the test target itself (e.g. a project whose `test` runs
+          # `cargo llvm-cov ...` produces lcov.info as a side effect); the
+          # `coverage` input on this workflow only gates whether we *upload*
+          # those lcov artifacts downstream, not which target we run.
+          CMD="$CMD -t test --parallel=${{ inputs.parallel }}"
 
           if [ -n "${{ inputs.exclude_projects }}" ]; then
             CMD="$CMD --exclude=${{ inputs.exclude_projects }}"
