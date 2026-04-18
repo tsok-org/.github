@@ -173,6 +173,22 @@
       ]
     },
 
+    "test_binaries": {
+      "type": "object",
+      "description": "Install external daemon binaries onto the runner's PATH so tests can spawn them as subprocesses. Distinct from `services` (which runs containerized daemons). Each key toggles a specific binary.",
+      "additionalProperties": false,
+      "properties": {
+        "redis": {
+          "type": "boolean",
+          "description": "Install `redis-server` via apt (Linux only). Tests typically spawn it via `Command::new(\"redis-server\")`."
+        },
+        "nats": {
+          "type": "boolean",
+          "description": "Install `nats-server` by downloading the latest stable release from github.com/nats-io/nats-server. Tests typically spawn it via `Command::new(\"nats-server\")`. Linux runners only for now."
+        }
+      }
+    },
+
     "services": {
       "type": "object",
       "description": "Service containers to start on the runner. Keys are user-chosen names (postgres, redis, nats, ...). Auth env vars (POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, REDIS_PASSWORD, MYSQL_*) come from the calling workflow's env block.",

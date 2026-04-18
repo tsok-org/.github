@@ -478,6 +478,62 @@ runs:
     # ══════════════════════════════════════════════════════════════════════════
     # 📦 SERVICES SETUP
     # ══════════════════════════════════════════════════════════════════════════
+    # 🧰 TEST BINARIES (external daemons installed on PATH)
+    # ══════════════════════════════════════════════════════════════════════════
+    # Distinct from the docker-based `services` block below. These are
+    # standalone daemon binaries (redis-server, nats-server, ...) installed
+    # directly onto the runner's PATH so tests can spawn them via
+    # `Command::new("<binary>")`. Used when tests manage server lifecycle
+    # themselves rather than connecting to a long-lived container.
+
+    - name: Install redis-server
+      if: steps.config.outputs.test_binary_redis == 'true' && runner.os == 'Linux'
+      shell: bash
+      run: |
+        echo "🧰 Installing redis-server via apt"
+        sudo apt-get update -y
+        sudo apt-get install -y --no-install-recommends redis-server
+        # Don't auto-start — tests spawn it themselves. Just confirm it's on PATH.
+        sudo systemctl stop redis-server 2>/dev/null || true
+        sudo systemctl disable redis-server 2>/dev/null || true
+        redis-server --version
+
+    - name: Install nats-server
+      if: steps.config.outputs.test_binary_nats == 'true' && runner.os == 'Linux'
+      shell: bash
+      run: |
+        # nats-server isn't in apt; fetch the latest stable release binary.
+        # GitHub API redirects /latest to the most recent release tag.
+        set -euo pipefail
+        case "${{ runner.arch }}" in
+          X64)   ASSET_ARCH="linux-amd64" ;;
+          ARM64) ASSET_ARCH="linux-arm64" ;;
+          *)
+            echo "::error::nats-server install not supported on arch=${{ runner.arch }}"
+            exit 1
+            ;;
+        esac
+        echo "🧰 Installing nats-server ($ASSET_ARCH)"
+        VERSION=$(curl -fsSL -o /dev/null -w '%{url_effective}' \
+          https://github.com/nats-io/nats-server/releases/latest \
+          | sed 's|.*/tag/||')
+        URL="https://github.com/nats-io/nats-server/releases/download/${VERSION}/nats-server-${VERSION}-${ASSET_ARCH}.tar.gz"
+        TMP=$(mktemp -d)
+        curl -fsSL "$URL" -o "$TMP/nats.tar.gz"
+        tar -xzf "$TMP/nats.tar.gz" -C "$TMP"
+        sudo install -m 0755 "$TMP"/nats-server-*-${ASSET_ARCH}/nats-server /usr/local/bin/nats-server
+        rm -rf "$TMP"
+        nats-server --version
+
+    - name: Warn on non-Linux test_binaries request
+      if: (steps.config.outputs.test_binary_redis == 'true' || steps.config.outputs.test_binary_nats == 'true') && runner.os != 'Linux'
+      shell: bash
+      run: |
+        echo "::warning::test_binaries (redis/nats) currently install on Linux only; ignored on ${{ runner.os }}."
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 🐳 SERVICE CONTAINERS (docker-based daemons; distinct from test_binaries)
+    # ══════════════════════════════════════════════════════════════════════════
     # Per-service credentials come from the calling workflow's env block:
     #   POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB
     #   REDIS_PASSWORD
