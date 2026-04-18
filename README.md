@@ -117,7 +117,7 @@ permissions:
 
 jobs:
   release:
-    uses: tsok-org/.github/.github/workflows/nx-cd.yml@main
+    uses: tsok-org/.github/.github/workflows/nx-cd.yml@v1
     with:
       publish_npm: true
       create_release: true
@@ -133,11 +133,17 @@ jobs:
 
 ### environment-setup
 
-Universal environment setup from `.environment.yml` configuration.
+Universal environment setup driven by `.environment.yml`. The action
+validates the config against [`schema.json`][env-schema] (draft-07), parses
+it with [`parse-config.sh`][env-parser], then conditionally runs the
+per-component setup steps.
+
+For the full `.environment.yml` reference, see
+[Configuration › `.environment.yml`](#environmentyml).
 
 ```yaml
 - name: Setup Environment
-  uses: tsok-org/.github/actions/environment-setup@main
+  uses: tsok-org/.github/actions/environment-setup@v1
   with:
     github_app_id: ${{ vars.APP_ID }}
     github_app_private_key: ${{ secrets.APP_PRIVATE_KEY }}
@@ -155,13 +161,23 @@ Universal environment setup from `.environment.yml` configuration.
 | `skip` | Components to skip (comma-separated) | - |
 | `only` | Only setup these components | - |
 
+`skip` / `only` accept: `node`, `python`, `rust`, `go`, `c`, `terraform`,
+`docker`, `services`, `system_packages`.
+
 #### Supported Components
 
-- **node** - Node.js with package manager auto-detection
-- **python** - Python with pip/poetry/uv support
-- **terraform** - Terraform CLI with optional Terragrunt and TFLint
-- **docker** - Docker Buildx with registry authentication
-- **services** - Container services (Postgres, Redis, etc.)
+- **node** — Node.js via `setup-node` with pnpm/npm/yarn detection
+- **python** — Python + pip / poetry / uv
+- **rust** — cache, diagnostics, coverage, build knobs (toolchain comes from `rust-toolchain.toml`)
+- **go** — Go via `actions/setup-go@v5`
+- **c** — gcc/clang + optional cmake/pkg-config (Linux only)
+- **terraform** — Terraform CLI with optional Terragrunt and TFLint
+- **docker** — Docker Buildx with registry authentication
+- **services** — Container services (Postgres, Redis, NATS, MySQL, Mongo, …)
+- **system_packages** — Arbitrary apt packages (Linux only)
+
+[env-schema]: actions/environment-setup/schema.json
+[env-parser]: actions/environment-setup/scripts/parse-config.sh
 
 ---
 
@@ -171,7 +187,7 @@ Intelligent Node.js setup with automatic package manager detection.
 
 ```yaml
 - name: Setup Node.js
-  uses: tsok-org/.github/actions/setup-node@main
+  uses: tsok-org/.github/actions/setup-node@v1
   with:
     node_version: "20"
     install_dependencies: true
@@ -214,7 +230,7 @@ Setup Terraform CLI with optional Terragrunt and TFLint.
 
 ```yaml
 - name: Setup Terraform
-  uses: tsok-org/.github/actions/setup-terraform@main
+  uses: tsok-org/.github/actions/setup-terraform@v1
   with:
     terraform_version: "1.12.2"
     terragrunt_version: "0.68.0"
@@ -240,7 +256,7 @@ Setup Docker with Buildx, QEMU, and registry authentication.
 
 ```yaml
 - name: Setup Docker
-  uses: tsok-org/.github/actions/setup-docker@main
+  uses: tsok-org/.github/actions/setup-docker@v1
   with:
     registry: ghcr.io
     username: ${{ github.actor }}
@@ -272,7 +288,7 @@ Continuous Integration workflow for Nx monorepos.
 ```yaml
 jobs:
   ci:
-    uses: tsok-org/.github/.github/workflows/nx-ci.yml@main
+    uses: tsok-org/.github/.github/workflows/nx-ci.yml@v1
     with:
       lint: true
       test: true
@@ -294,18 +310,29 @@ jobs:
 | `environment_config` | Path to .environment.yml | `.environment.yml` |
 | `environment_skip` | Components to skip | `docker,terraform,services` |
 | `environment_only` | Only setup these components | - |
+| `working_directory` | Working directory (nested workspaces) | `.` |
 | `lint` | Run lint task | `true` |
 | `test` | Run test task | `true` |
 | `build` | Run build task | `true` |
 | `e2e` | Run e2e task | `false` |
+| `custom_tasks` | Extra comma-separated Nx tasks (e.g. `typecheck,format:check`) | - |
 | `parallel` | Parallel task count | `3` |
 | `affected_only` | Only affected projects | `true` |
-| `exclude_projects` | Projects to exclude | - |
+| `exclude_projects` | Projects to exclude (glob OK) | - |
 | `coverage` | Enable coverage | `false` |
-| `coverage_reporter` | Reporter (codecov/coveralls) | `none` |
-| `distribute_on` | Nx Cloud distribution | - |
+| `coverage_reporter` | Reporter (codecov/coveralls/none) | `none` |
+| `distribute_on` | Nx Cloud distribution (e.g. `3 linux-medium-js`) | - |
+| `stop_agents_after` | Task to stop distributed agents after | `build` |
+| `nx_cloud_enabled` | Enable Nx Cloud remote cache | `true` |
+| `ref` | Git ref to checkout (branch/tag/SHA). Empty = triggering ref. | - |
 | `runs_on` | Runner label | `ubuntu-latest` |
 | `timeout_minutes` | Job timeout | `30` |
+| `verbose` | Verbose diagnostics (Nx + cargo + backtraces) | `false` |
+| `github_app_id` | GitHub App ID (optional) | - |
+
+The `ref` input is useful for scheduled/`workflow_dispatch` callers that
+need to test a specific branch rather than the default branch the cron
+fires from; it mirrors the `ref` input on `nx-cd.yml`.
 
 #### Outputs
 
@@ -325,19 +352,20 @@ Continuous Delivery workflow with versioning and publishing.
 ```yaml
 jobs:
   release:
-    uses: tsok-org/.github/.github/workflows/nx-cd.yml@main
+    uses: tsok-org/.github/.github/workflows/nx-cd.yml@v1
     with:
       preid: beta           # alpha, beta, rc, or empty for stable
       dist_tag: beta        # npm dist-tag
-      publish_npm: true
       publish_docker: true
       docker_registry: ghcr.io
-      create_release: true
+      docker_platforms: linux/amd64,linux/arm64
       github_prerelease: true
+      github_app_id: ${{ vars.GITHUB_APP_ID }}
     secrets:
       npm_token: ${{ secrets.NPM_TOKEN }}
-      github_app_id: ${{ vars.GITHUB_APP_ID }}
       github_app_private_key: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}
+      docker_username: ${{ github.actor }}
+      docker_password: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 #### Versioning Strategy
@@ -355,24 +383,40 @@ jobs:
 |-------|-------------|---------|
 | `environment_config` | Path to .environment.yml | `.environment.yml` |
 | `environment_skip` | Components to skip | `terraform,services` |
-| `preid` | Pre-release identifier | - |
-| `dry_run` | Dry run mode | `false` |
-| `specifier` | Version specifier | - |
-| `publish_npm` | Publish to npm | `false` |
+| `environment_only` | Only setup these components | - |
+| `working_directory` | Working directory for the release | `.` |
+| `preid` | Pre-release identifier (alpha/beta/rc/…) | - |
 | `dist_tag` | npm dist-tag | `latest` |
+| `github_prerelease` | Mark GitHub release as pre-release | `false` |
 | `publish_docker` | Build/push Docker images | `false` |
 | `docker_registry` | Docker registry | `ghcr.io` |
-| `docker_platforms` | Build platforms | `linux/amd64` |
-| `create_release` | Create GitHub release | `true` |
-| `github_prerelease` | Mark as pre-release | `false` |
+| `docker_platforms` | Build platforms (comma-separated) | `linux/amd64` |
+| `dry_run` | Dry run mode | `false` |
+| `first_release` | Skip changelog comparison on first release | `false` |
+| `verbose` | Verbose `nx release` output | `false` |
+| `ref` | Git ref to checkout (empty = triggering ref) | - |
+| `git_user_name` | Commit author name (fallback when no App) | `github-actions[bot]` |
+| `git_user_email` | Commit author email (fallback when no App) | `github-actions[bot]@users.noreply.github.com` |
+| `runs_on` | Runner label | `ubuntu-latest` |
+| `timeout_minutes` | Job timeout | `30` |
+| `github_app_id` | GitHub App ID (input, not secret — App ID is not sensitive) | - |
+
+#### Secrets
+
+| Secret | Description |
+|--------|-------------|
+| `github_app_private_key` | GitHub App private key (PEM) |
+| `npm_token` | npm auth token (for `nx release publish`) |
+| `docker_username` | Docker registry username |
+| `docker_password` | Docker registry password/token |
+| `nx_cloud_access_token` | Nx Cloud remote cache |
 
 #### Outputs
 
 | Output | Description |
 |--------|-------------|
-| `version` | Released version |
-| `tag` | Git tag |
-| `published_packages` | JSON array of packages |
+| `released` | Whether any projects were released |
+| `version` | The version that was released |
 
 ---
 
@@ -389,7 +433,7 @@ on:
 
 jobs:
   migrate:
-    uses: tsok-org/.github/.github/workflows/nx-migrate.yml@main
+    uses: tsok-org/.github/.github/workflows/nx-migrate.yml@v1
     with:
       channel: stable       # stable, rc, beta, canary
       major_version: "22"   # Lock to major version
@@ -440,7 +484,7 @@ permissions:
 
 jobs:
   auto-merge:
-    uses: tsok-org/.github/.github/workflows/dependabot-auto-merge.yml@main
+    uses: tsok-org/.github/.github/workflows/dependabot-auto-merge.yml@v1
     with:
       merge_level: minor      # patch, minor, major
       merge_method: squash
@@ -482,7 +526,7 @@ on:
 
 jobs:
   scan:
-    uses: tsok-org/.github/.github/workflows/gitleaks.yml@main
+    uses: tsok-org/.github/.github/workflows/gitleaks.yml@v1
     with:
       fail_on_leak: true
       upload_sarif: true  # Requires GitHub Advanced Security
@@ -513,7 +557,7 @@ on:
 
 jobs:
   validate:
-    uses: tsok-org/.github/.github/workflows/pr-validate.yml@main
+    uses: tsok-org/.github/.github/workflows/pr-validate.yml@v1
     with:
       require_scope: false
       auto_label: true
@@ -553,48 +597,215 @@ jobs:
 
 ### .environment.yml
 
-Declarative environment configuration file.
+Declarative environment configuration consumed by
+[`actions/environment-setup`](#environment-setup). The authoritative type
+spec is [`actions/environment-setup/schema.json`][env-schema] (draft-07);
+this section is the field-by-field reference.
+
+#### Polyglot by design
+
+`.environment.yml` is intended to grow. Today it has first-class support
+for **Rust**, **Node/TypeScript**, **Python**, **Go**, and **C/C++**, plus
+**Terraform**, **Docker**, service containers, and ad-hoc apt packages via
+`system_packages`. Adding a new language means extending
+[`schema.json`][env-schema] + [`parse-config.sh`][env-parser] +
+[`action.yml`][env-action] — the caller's `uses: …/environment-setup@v1`
+shape stays the same.
+
+[env-action]: actions/environment-setup/action.yml
+
+#### Top-level fields
+
+| Field | Type | Purpose |
+|---|---|---|
+| `version` | string, **required** | Schema version. Only `"1"` today. |
+| `node` | bool \| `{ version, package_manager, install, cache, frozen_lockfile }` | Node.js + pnpm/npm/yarn |
+| `python` | bool \| string \| `{ version, package_manager }` | Python + pip/poetry/uv |
+| `rust` | `{ cache, diagnostics, coverage, build_jobs, linker }` | Rust cache + CI knobs (toolchain comes from `rust-toolchain.toml`) |
+| `go` | bool \| string \| `{ version, version_file, cache, modules }` | Go toolchain via `actions/setup-go` |
+| `c` | `{ toolchain, cmake, pkg_config, packages[] }` | C/C++ toolchain (gcc \| clang) + apt packages |
+| `terraform` | bool \| string \| `{ version }` | Terraform CLI |
+| `terragrunt` | bool \| string \| `{ version }` | Terragrunt alongside Terraform |
+| `tflint` | bool \| `{ version }` | TFLint |
+| `docker` | bool \| `{ buildx, platforms, registry }` | Docker + buildx |
+| `services` | object | Service containers (postgres, redis, …) |
+| `system_packages` | string[] | Additional apt packages on Linux |
+
+Every field is optional except `version`.
+
+#### Minimal example
 
 ```yaml
 # .environment.yml
+version: "1"
 
-# Node.js configuration
 node:
-  version: .node-version    # or "20", "lts/*", "20.11.0"
-  package_manager: auto     # auto, npm, pnpm, yarn, bun
+  version: .node-version   # or "20", "lts/*", "20.11.0"
+  package_manager: pnpm
   install: true
   cache: true
+  frozen_lockfile: true
+```
 
-# Python configuration
+#### `version`
+
+```yaml
+version: "1"
+```
+
+Required. Pinned to `"1"` today; bumped on breaking schema changes.
+
+#### `node`
+
+```yaml
+node:
+  version: .node-version   # explicit ("20") or file reference (".node-version")
+  package_manager: pnpm    # pnpm | npm | yarn
+  install: true            # run pkg-mgr install step; default true
+  cache: true              # built-in setup-node cache; default true
+  frozen_lockfile: true    # fail on lockfile drift; default true
+```
+
+Shorthand: `node: true` enables with defaults.
+
+#### `python`
+
+```yaml
 python:
   version: "3.12"
-  package_manager: pip      # pip, poetry, uv
+  package_manager: uv      # pip | poetry | uv
+```
 
-# Terraform configuration
-terraform:
-  version: "1.12.2"         # or "latest"
+Shorthands: `python: true` (→ 3.12 + pip), `python: "3.11"`.
 
-terragrunt:
-  version: "0.68.0"
+#### `rust`
 
-tflint: true                # Install TFLint
+```yaml
+rust:
+  cache: true              # Swatinem/rust-cache for target/
+  diagnostics: true        # rustup show, cargo env, connectivity smoke test
+  coverage: true           # installs cargo-llvm-cov (Linux only)
+  build_jobs: 1            # pin CARGO_BUILD_JOBS (serial link for small runners)
+  linker: mold             # lld | mold — alternative linkers
+```
 
-# Docker configuration
+Toolchain selection lives in `rust-toolchain.toml` at the repo root;
+rustup auto-installs on first `cargo` invocation. This block only covers
+caching, diagnostics, and build knobs.
+
+When `rust` is enabled, the action also validates `CARGO_TERM_VERBOSE`,
+`CARGO_TERM_COLOR`, and `RUST_BACKTRACE` env vars emitted by the calling
+workflow — empty strings fail fast instead of confusing cargo downstream.
+
+#### `go`
+
+```yaml
+go:
+  version: "1.22"          # or "1.22.3"
+  version_file: go.mod     # or ".go-version"
+  cache: true              # module + build cache; default true
+  modules: true            # GO111MODULE; default true
+```
+
+Shorthands: `go: true` (latest), `go: "1.22"`, `go: { version_file: go.mod }`.
+Installed via `actions/setup-go@v5`.
+
+#### `c`
+
+```yaml
+c:
+  toolchain: clang         # gcc | clang
+  cmake: true
+  pkg_config: true
+  packages:                # additive to top-level system_packages
+    - libssl-dev
+    - libcurl4-openssl-dev
+```
+
+Linux only. `gcc` installs `build-essential`; `clang` installs `clang`
+and `lld`. Use this (rather than raw `system_packages`) to express
+**what toolchain you want** — the action derives the apt package set.
+
+#### `terraform` / `terragrunt` / `tflint`
+
+```yaml
+terraform: "1.12.2"        # or true (latest), or { version: "..." }
+terragrunt: "0.68.0"       # only installed when terraform is enabled
+tflint: true               # or { version: "0.50.0" }
+```
+
+#### `docker`
+
+```yaml
 docker:
   buildx: true
   platforms:
     - linux/amd64
     - linux/arm64
+  registry: ghcr.io        # overridden by DOCKER_REGISTRY env if set
+```
 
-# Service containers for tests
+Credentials come from the calling workflow's env block
+(`DOCKER_USERNAME`, `DOCKER_PASSWORD`), not the config file.
+
+#### `services`
+
+```yaml
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine   # optional — sensible default per service name
     port: 5432
+    env:
+      POSTGRES_USER: test
   redis:
     image: redis:7-alpine
     port: 6379
 ```
+
+Keys are user-chosen names. Auth env (`POSTGRES_USER`, `POSTGRES_PASSWORD`,
+`POSTGRES_DB`, `REDIS_PASSWORD`, `MYSQL_*`) comes from the calling
+workflow's env and overrides values in the config.
+
+Recognised service defaults: `postgres`, `redis`, `nats`, `mysql`, `mongo`.
+Unknown names default to `<name>:latest`.
+
+#### `system_packages`
+
+```yaml
+system_packages:
+  - libssl-dev
+  - pkg-config
+```
+
+Installed via `apt-get install` on Linux runners; warned-and-skipped on
+macOS/Windows. Typical use: C/C++ headers for Rust `*-sys` crates. For
+structured intent (toolchain + cmake/pkg-config), prefer `c:`.
+
+#### Schema validation
+
+`.environment.yml` is validated against
+[`schema.json`][env-schema] (JSON Schema draft-07) by
+[`check-jsonschema`](https://github.com/python-jsonschema/check-jsonschema)
+on every run, **before** the parser runs. Misconfigured files fail fast
+with a field-level error rather than mysterious parser drift.
+
+On failure the step surfaces:
+
+```
+::error::.environment.yml failed schema validation.
+─── .environment.yml ─────────────────────────────────────
+  version: "1"
+  rust:
+    linker: gold        # <-- invalid: enum [lld, mold]
+─── schema: .../schema.json ──────────────────────────────
+  (see errors above for the specific field)
+```
+
+No config file? The step exits cleanly — the parser has its own default
+path and a repo without `.environment.yml` is a valid no-op.
+
+For the authoritative type spec, including every field's type,
+constraints, and description, read [`schema.json`][env-schema] directly.
 
 ### Authentication
 
