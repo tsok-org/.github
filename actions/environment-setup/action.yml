@@ -71,6 +71,39 @@ inputs:
       Example: "node" or "node,terraform"
     default: ""
 
+# Forward the per-component setup flags from the internal "Parse configuration"
+# step to consumers of this composite action. Needed so downstream jobs can
+# assert on what got set up (self-test workflow, diagnostic summaries, etc.).
+# Composite actions only expose step outputs through this top-level block.
+outputs:
+  setup_node:
+    description: "Whether Node.js setup ran (true/false)"
+    value: ${{ steps.config.outputs.setup_node }}
+  setup_python:
+    description: "Whether Python setup ran (true/false)"
+    value: ${{ steps.config.outputs.setup_python }}
+  setup_rust:
+    description: "Whether Rust cache/diagnostics setup ran (true/false)"
+    value: ${{ steps.config.outputs.setup_rust }}
+  setup_go:
+    description: "Whether Go setup ran (true/false)"
+    value: ${{ steps.config.outputs.setup_go }}
+  setup_c:
+    description: "Whether C toolchain setup ran (true/false)"
+    value: ${{ steps.config.outputs.setup_c }}
+  setup_terraform:
+    description: "Whether Terraform setup ran (true/false)"
+    value: ${{ steps.config.outputs.setup_terraform }}
+  setup_docker:
+    description: "Whether Docker setup ran (true/false)"
+    value: ${{ steps.config.outputs.setup_docker }}
+  setup_services:
+    description: "Whether service containers started (true/false)"
+    value: ${{ steps.config.outputs.setup_services }}
+  setup_system_packages:
+    description: "Whether apt system_packages were installed (true/false)"
+    value: ${{ steps.config.outputs.setup_system_packages }}
+
 runs:
   using: composite
   steps:
