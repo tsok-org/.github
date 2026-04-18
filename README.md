@@ -74,9 +74,17 @@ permissions:
   contents: read
   checks: write
 
+# Cancel superseded runs on the same PR / branch so a fast follow-up push
+# doesn't double up on runners. Set at the *caller* level — reusable workflows
+# run as part of the caller's run, so this is the authoritative place to
+# control cancellation.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ci:
-    uses: tsok-org/.github/.github/workflows/nx-ci.yml@main
+    uses: tsok-org/.github/.github/workflows/nx-ci.yml@v1
     with:
       lint: true
       test: true
@@ -84,6 +92,14 @@ jobs:
     secrets:
       nx_cloud_access_token: ${{ secrets.NX_CLOUD_ACCESS_TOKEN }}
 ```
+
+> **Versioning.** Prefer pinning reusable workflows to a released tag
+> (`@v1`, `@v1.2.3`) rather than `@main`. `@main` tracks the tip of this
+> repo and an accidental breakage propagates instantly to all consumers.
+> Composite actions inside reusable workflows (e.g. `environment-setup`)
+> still use floating refs today — that is an explicit trade-off so the
+> `v1` contract protects the *outer* workflow surface, which is what
+> consumers actually depend on.
 
 ### 3. Create CD workflow
 
