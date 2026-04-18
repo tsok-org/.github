@@ -205,6 +205,22 @@ on:
         default: true
 
       # ─────────────────────────────────────────────────────────────────────────
+      # Git Configuration
+      # ─────────────────────────────────────────────────────────────────────────
+      ref:
+        description: |
+          Git ref to checkout (branch, tag, or SHA).
+          Leave empty to use the triggering ref (default behavior — i.e. the
+          PR head for `pull_request`, the pushed ref for `push`, etc.).
+
+          Useful for scheduled/workflow_dispatch callers that need to test a
+          specific branch rather than the default branch the cron fires from.
+          Mirrors the `ref` input already exposed by nx-cd.yml.
+        required: false
+        type: string
+        default: ""
+
+      # ─────────────────────────────────────────────────────────────────────────
       # Runner Configuration
       # ─────────────────────────────────────────────────────────────────────────
       runs_on:
@@ -324,6 +340,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.ref || github.ref }}
 
       # ════════════════════════════════════════════════════════════════════════
       # 🔄 NX AFFECTED DETECTION
