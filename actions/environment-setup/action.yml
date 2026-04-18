@@ -368,18 +368,26 @@ runs:
         #   rust:
         #     cache: true         # enable Swatinem/rust-cache for target/ dirs
         #     diagnostics: true   # print cargo/rust env info pre-job
+        #     build_jobs: 1       # pin CARGO_BUILD_JOBS (parallel link OOMs
+        #                         # on small-memory runners with many big
+        #                         # test binaries; set to 1 to force serial)
+        #     linker: lld | mold  # override the default linker (memory-lighter)
         # The Rust toolchain itself is expected to be managed by
         # rust-toolchain.toml at the repo root (rustup auto-installs on
-        # first cargo invocation). This section only wires up caching and
-        # diagnostic prints.
+        # first cargo invocation). This section wires up caching,
+        # diagnostics, and runtime knobs that are CI-specific.
         RUST_CONFIG=$(yq -e '.rust // false' "$CONFIG_FILE" 2>/dev/null || echo "false")
         if [[ "$RUST_CONFIG" != "false" && "$RUST_CONFIG" != "null" ]] && should_setup "rust"; then
           echo "setup_rust=true" >> "$GITHUB_OUTPUT"
           RUST_CACHE=$(yq -e '.rust.cache // true' "$CONFIG_FILE" 2>/dev/null || echo "true")
           RUST_DIAG=$(yq -e '.rust.diagnostics // false' "$CONFIG_FILE" 2>/dev/null || echo "false")
+          RUST_JOBS=$(yq -e '.rust.build_jobs // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+          RUST_LINKER=$(yq -e '.rust.linker // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
           echo "rust_cache=$RUST_CACHE" >> "$GITHUB_OUTPUT"
           echo "rust_diagnostics=$RUST_DIAG" >> "$GITHUB_OUTPUT"
-          echo "  ✓ Rust: cache=$RUST_CACHE, diagnostics=$RUST_DIAG"
+          echo "rust_build_jobs=$RUST_JOBS" >> "$GITHUB_OUTPUT"
+          echo "rust_linker=$RUST_LINKER" >> "$GITHUB_OUTPUT"
+          echo "  ✓ Rust: cache=$RUST_CACHE, diagnostics=$RUST_DIAG, build_jobs=${RUST_JOBS:-auto}, linker=${RUST_LINKER:-default}"
         else
           echo "setup_rust=false" >> "$GITHUB_OUTPUT"
         fi
@@ -541,6 +549,44 @@ runs:
         # Share cache across all jobs in the same workflow, not just the
         # branch. This lets parallel workflows re-use each other's caches.
         shared-key: "rust-workspace"
+
+    - name: Apply Rust build knobs (CARGO_BUILD_JOBS, linker)
+      if: steps.config.outputs.setup_rust == 'true'
+      shell: bash
+      run: |
+        JOBS="${{ steps.config.outputs.rust_build_jobs }}"
+        LINKER="${{ steps.config.outputs.rust_linker }}"
+        if [[ -n "$JOBS" ]]; then
+          echo "🦀 Pinning CARGO_BUILD_JOBS=$JOBS (serial link avoids OOM on small runners)"
+          echo "CARGO_BUILD_JOBS=$JOBS" >> "$GITHUB_ENV"
+        fi
+        if [[ -n "$LINKER" ]]; then
+          case "$LINKER" in
+            lld)
+              echo "🦀 Using lld linker (memory-lighter than GNU ld)"
+              # Ensure lld is installed; it ships with llvm-tools-preview in rustup
+              if ! command -v ld.lld >/dev/null 2>&1; then
+                sudo apt-get install -y --no-install-recommends lld
+              fi
+              # Apply via RUSTFLAGS so every link phase uses lld
+              CUR="${RUSTFLAGS:-}"
+              NEW="-C link-arg=-fuse-ld=lld"
+              echo "RUSTFLAGS=${CUR}${CUR:+ }${NEW}" >> "$GITHUB_ENV"
+              ;;
+            mold)
+              echo "🦀 Using mold linker (fastest + smallest memory)"
+              if ! command -v mold >/dev/null 2>&1; then
+                sudo apt-get install -y --no-install-recommends mold
+              fi
+              CUR="${RUSTFLAGS:-}"
+              NEW="-C link-arg=-fuse-ld=mold"
+              echo "RUSTFLAGS=${CUR}${CUR:+ }${NEW}" >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "::warning::Unknown rust.linker '$LINKER'; ignoring. Supported: lld, mold."
+              ;;
+          esac
+        fi
 
     # ══════════════════════════════════════════════════════════════════════════
     # 🐳 DOCKER SETUP
