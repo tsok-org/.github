@@ -1,0 +1,267 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/tsok-org/.github/actions/environment-setup/schema.json",
+  "title": "tsok-org environment-setup configuration",
+  "description": "Schema for .environment.yml — the declarative config consumed by the environment-setup composite action. Validated in CI by check-jsonschema before parse-config.sh is invoked.",
+  "type": "object",
+  "required": ["version"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Schema version. Must be \"1\". Bump when making breaking changes.",
+      "enum": ["1"]
+    },
+
+    "node": {
+      "description": "Node.js runtime setup. `true` = enable with defaults; object = fine-grained control.",
+      "oneOf": [
+        { "type": "boolean" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "type": "string",
+              "description": "Node version. Explicit (e.g. \"20\") or file reference (e.g. \".node-version\", \"path/to/file\")."
+            },
+            "package_manager": {
+              "type": "string",
+              "enum": ["pnpm", "npm", "yarn"],
+              "description": "Package manager to use for install step."
+            },
+            "install": {
+              "type": "boolean",
+              "description": "Run the package-manager install step after setup. Default: true."
+            },
+            "cache": {
+              "type": "boolean",
+              "description": "Enable package-manager cache (actions/setup-node built-in). Default: true."
+            },
+            "frozen_lockfile": {
+              "type": "boolean",
+              "description": "Fail install on lockfile drift. Default: true."
+            }
+          }
+        }
+      ]
+    },
+
+    "python": {
+      "description": "Python runtime. `true` = 3.12 + pip; string = explicit version; object = full control.",
+      "oneOf": [
+        { "type": "boolean" },
+        { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+){0,2}$" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version"],
+          "properties": {
+            "version": { "type": "string" },
+            "package_manager": {
+              "type": "string",
+              "enum": ["pip", "poetry", "uv"]
+            }
+          }
+        }
+      ]
+    },
+
+    "rust": {
+      "type": "object",
+      "description": "Rust toolchain wiring. Toolchain itself is managed by rust-toolchain.toml (rustup auto-installs on first cargo invocation). This block controls CI caching, diagnostics, and build knobs.",
+      "additionalProperties": false,
+      "properties": {
+        "cache": {
+          "type": "boolean",
+          "description": "Enable Swatinem/rust-cache for target/ dirs."
+        },
+        "diagnostics": {
+          "type": "boolean",
+          "description": "Print cargo/rust env info pre-job (runner specs, rustup show, connectivity)."
+        },
+        "coverage": {
+          "type": "boolean",
+          "description": "Install cargo-llvm-cov for lcov output (Linux only)."
+        },
+        "build_jobs": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Pin CARGO_BUILD_JOBS. Set to 1 to force serial linking on memory-constrained runners."
+        },
+        "linker": {
+          "type": "string",
+          "enum": ["lld", "mold"],
+          "description": "Alternative linker. lld = memory-lighter; mold = fastest + smallest memory."
+        }
+      }
+    },
+
+    "terraform": {
+      "description": "Terraform. `true` = latest; string version; object with `version`.",
+      "oneOf": [
+        { "type": "boolean" },
+        { "type": "string" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version"],
+          "properties": {
+            "version": { "type": "string" }
+          }
+        }
+      ]
+    },
+
+    "terragrunt": {
+      "description": "Terragrunt. Only installed when terraform is also enabled.",
+      "oneOf": [
+        { "type": "boolean" },
+        { "type": "string" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version"],
+          "properties": {
+            "version": { "type": "string" }
+          }
+        }
+      ]
+    },
+
+    "tflint": {
+      "description": "TFLint. `true` = install with defaults.",
+      "oneOf": [
+        { "type": "boolean" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": { "type": "string" }
+          }
+        }
+      ]
+    },
+
+    "docker": {
+      "description": "Docker / buildx / registry auth. Credentials (DOCKER_USERNAME / DOCKER_PASSWORD) come from the calling workflow's env; DOCKER_REGISTRY env overrides `registry` here.",
+      "oneOf": [
+        { "type": "boolean" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "buildx": {
+              "type": "boolean",
+              "description": "Install docker buildx. Default: true."
+            },
+            "platforms": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "QEMU target platforms, e.g. [\"linux/amd64\", \"linux/arm64\"]."
+            },
+            "registry": {
+              "type": "string",
+              "description": "Registry URL (ghcr.io, docker.io, ...). Overridden by DOCKER_REGISTRY env if set."
+            }
+          }
+        }
+      ]
+    },
+
+    "services": {
+      "type": "object",
+      "description": "Service containers to start on the runner. Keys are user-chosen names (postgres, redis, nats, ...). Auth env vars (POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, REDIS_PASSWORD, MYSQL_*) come from the calling workflow's env block.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "image": {
+            "type": "string",
+            "description": "Container image (tag included). Defaults to a per-service sensible image if omitted."
+          },
+          "port": {
+            "type": ["integer", "string"],
+            "description": "Port to publish. Mapped 1:1 (host:container)."
+          },
+          "env": {
+            "type": "object",
+            "description": "Key/value env vars passed via -e.",
+            "additionalProperties": { "type": ["string", "number", "boolean"] }
+          },
+          "args": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Extra positional args appended to `docker run`."
+          },
+          "healthcheck": {
+            "type": "string",
+            "description": "Optional healthcheck command. Currently informational."
+          }
+        }
+      }
+    },
+
+    "system_packages": {
+      "type": "array",
+      "description": "apt packages to install on Linux runners. Typical use: C/C++ dev headers for Rust *-sys crates. Ignored with a warning on macOS/Windows.",
+      "items": { "type": "string" }
+    },
+
+    "go": {
+      "description": "Go runtime. Installed via actions/setup-go@v5. `true` = latest with defaults; string version (\"1.22\", \"1.22.3\"); file reference (\".go-version\", \"go.mod\"); or object.",
+      "oneOf": [
+        { "type": "boolean" },
+        { "type": "string" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "type": "string",
+              "description": "Explicit Go version, e.g. \"1.22\" or \"1.22.3\"."
+            },
+            "version_file": {
+              "type": "string",
+              "description": "Path to file containing the Go version (e.g. \"go.mod\", \".go-version\")."
+            },
+            "cache": {
+              "type": "boolean",
+              "description": "Cache module + build caches. Default: true."
+            },
+            "modules": {
+              "type": "boolean",
+              "description": "Enable Go modules support. Default: true."
+            }
+          }
+        }
+      ]
+    },
+
+    "c": {
+      "type": "object",
+      "description": "Structured C/C++ toolchain intent. Distinct from `system_packages` — this expresses *what toolchain you want* (gcc vs clang, cmake, pkg-config) and the action derives the right apt packages. Additive to `system_packages`. Linux only.",
+      "additionalProperties": false,
+      "properties": {
+        "toolchain": {
+          "type": "string",
+          "enum": ["gcc", "clang"],
+          "description": "Compiler family. gcc→build-essential; clang→clang+lld."
+        },
+        "cmake": {
+          "type": "boolean",
+          "description": "Also install cmake."
+        },
+        "pkg_config": {
+          "type": "boolean",
+          "description": "Also install pkg-config."
+        },
+        "packages": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Additional apt packages (library headers, etc). Additive to top-level system_packages."
+        }
+      }
+    }
+  }
+}
