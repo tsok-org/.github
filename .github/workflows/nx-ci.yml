@@ -437,13 +437,21 @@ jobs:
             CMD="$CMD run-many"
           fi
 
-          # When coverage: true, run the project's `test:coverage` target
-          # (e.g., `cargo llvm-cov` for Rust, `jest --coverage` for TS)
-          # instead of the plain `test` target. This avoids the old
-          # approach of appending `--coverage` to the test command, which
-          # broke for cargo (cargo test has no --coverage flag).
+          # Always run `test` on every affected project so no crate is skipped.
+          # When coverage: true, ALSO run `test:coverage` on any project that
+          # has that target defined — that's the project-specific instrumented
+          # test run (e.g. `cargo llvm-cov` for Rust) which produces lcov.info.
+          #
+          # Nx's comma-separated target list runs both in one invocation;
+          # projects without `test:coverage` just skip that half. A project
+          # like Rust's mcpg with both targets will run tests twice — once
+          # plain and once instrumented — which is fast and correct.
+          #
+          # Prior behavior replaced `test` with `test:coverage` when coverage
+          # was true; that silently skipped every crate without a dedicated
+          # coverage target (e.g. 27 of 28 crates in the MCPG workspace).
           if [ "${{ inputs.coverage }}" == "true" ]; then
-            CMD="$CMD -t test:coverage --parallel=${{ inputs.parallel }}"
+            CMD="$CMD -t test,test:coverage --parallel=${{ inputs.parallel }}"
           else
             CMD="$CMD -t test --parallel=${{ inputs.parallel }}"
           fi
