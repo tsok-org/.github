@@ -186,6 +186,27 @@ runs:
       run: ${{ github.action_path }}/scripts/parse-config.sh "$CONFIG_FILE"
 
     # ══════════════════════════════════════════════════════════════════════════
+    # 🧹 FREE DISK SPACE (optional, Linux only)
+    # ══════════════════════════════════════════════════════════════════════════
+    # Runs before any heavy install/compile steps so they see a fresh ~10–14 GB.
+    # GitHub-hosted ubuntu runners pre-install Android SDK, .NET, Haskell, large
+    # Docker images, etc. — none of which we need for a typical Rust/Nx build.
+    # Gated on `free_disk_space: true` in .environment.yml so the action remains
+    # opt-in (the cleanup takes ~30–60s and isn't needed for small workloads).
+
+    - name: Free disk space
+      if: steps.config.outputs.free_disk_space == 'true' && runner.os == 'Linux'
+      uses: jlumbroso/free-disk-space@v1.3.1
+      with:
+        tool-cache: false       # keep actions/cache, Node, Python, Go pre-installs
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: false   # slow and we don't need most of it gone
+        swap-storage: false     # keep swap — Rust linker still benefits
+        docker-images: true
+
+    # ══════════════════════════════════════════════════════════════════════════
     # ✅ VALIDATE CI ENV VARS (cargo-critical)
     # ══════════════════════════════════════════════════════════════════════════
     # The nx-ci.yml workflow emits CARGO_TERM_* / RUST_BACKTRACE via ternary
