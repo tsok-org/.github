@@ -230,7 +230,8 @@ jobs:
           assert "setup_docker=false"
           assert "setup_terraform=false"
           assert "setup_system_packages=false"
-          assert "setup_services=false"
+          assert "service_redis=false"
+          assert "service_nats=false"
           echo "node-only: single-language path clean."
 
       - name: Assert outputs (python-poetry)
@@ -301,7 +302,7 @@ jobs:
         id: env_setup
         uses: ./actions/environment-setup
         with:
-          skip: node,python,terraform,docker,services,system_packages,rust,go,c
+          skip: node,python,terraform,docker,system_packages,rust,go,c
 
       - name: Assert action short-circuited cleanly
         if: matrix.fixture.expect == 'pass'
@@ -317,7 +318,7 @@ jobs:
           # honored for that component (regression).
           fail=0
           for key in setup_node setup_python setup_rust setup_go setup_c \
-                     setup_docker setup_terraform setup_services \
+                     setup_docker setup_terraform \
                      setup_system_packages; do
             actual=$(jq -r --arg k "$key" '.[$k] // "<missing>"' <<<"$OUTPUTS_JSON")
             if [[ "$actual" != "false" ]]; then

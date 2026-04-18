@@ -97,9 +97,12 @@ outputs:
   setup_docker:
     description: "Whether Docker setup ran (true/false)"
     value: ${{ steps.config.outputs.setup_docker }}
-  setup_services:
-    description: "Whether service containers started (true/false)"
-    value: ${{ steps.config.outputs.setup_services }}
+  service_redis:
+    description: "Whether redis-server was installed onto PATH (true/false)"
+    value: ${{ steps.config.outputs.service_redis }}
+  service_nats:
+    description: "Whether nats-server was installed onto PATH (true/false)"
+    value: ${{ steps.config.outputs.service_nats }}
   setup_system_packages:
     description: "Whether apt system_packages were installed (true/false)"
     value: ${{ steps.config.outputs.setup_system_packages }}
@@ -478,16 +481,14 @@ runs:
     # ══════════════════════════════════════════════════════════════════════════
     # 📦 SERVICES SETUP
     # ══════════════════════════════════════════════════════════════════════════
-    # 🧰 TEST BINARIES (external daemons installed on PATH)
+    # 🧰 SERVICES (external daemon binaries installed on PATH)
     # ══════════════════════════════════════════════════════════════════════════
-    # Distinct from the docker-based `services` block below. These are
-    # standalone daemon binaries (redis-server, nats-server, ...) installed
-    # directly onto the runner's PATH so tests can spawn them via
-    # `Command::new("<binary>")`. Used when tests manage server lifecycle
-    # themselves rather than connecting to a long-lived container.
+    # Daemons (redis-server, nats-server, …) placed directly on the runner's
+    # PATH so tests can spawn them themselves via `Command::new("<binary>")`.
+    # Tests own server lifecycle — we don't auto-start anything here.
 
     - name: Install redis-server
-      if: steps.config.outputs.test_binary_redis == 'true' && runner.os == 'Linux'
+      if: steps.config.outputs.service_redis == 'true' && runner.os == 'Linux'
       shell: bash
       run: |
         echo "🧰 Installing redis-server via apt"
@@ -499,11 +500,11 @@ runs:
         redis-server --version
 
     - name: Install nats-server
-      if: steps.config.outputs.test_binary_nats == 'true' && runner.os == 'Linux'
+      if: steps.config.outputs.service_nats == 'true' && runner.os == 'Linux'
       shell: bash
       run: |
         # nats-server isn't in apt; fetch the latest stable release binary.
-        # GitHub API redirects /latest to the most recent release tag.
+        # The /releases/latest URL redirects to the most recent tag.
         set -euo pipefail
         case "${{ runner.arch }}" in
           X64)   ASSET_ARCH="linux-amd64" ;;
@@ -525,136 +526,12 @@ runs:
         rm -rf "$TMP"
         nats-server --version
 
-    - name: Warn on non-Linux test_binaries request
-      if: (steps.config.outputs.test_binary_redis == 'true' || steps.config.outputs.test_binary_nats == 'true') && runner.os != 'Linux'
+    - name: Warn on non-Linux services request
+      if: (steps.config.outputs.service_redis == 'true' || steps.config.outputs.service_nats == 'true') && runner.os != 'Linux'
       shell: bash
       run: |
-        echo "::warning::test_binaries (redis/nats) currently install on Linux only; ignored on ${{ runner.os }}."
+        echo "::warning::services (redis/nats) currently install on Linux only; ignored on ${{ runner.os }}."
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # 🐳 SERVICE CONTAINERS (docker-based daemons; distinct from test_binaries)
-    # ══════════════════════════════════════════════════════════════════════════
-    # Per-service credentials come from the calling workflow's env block:
-    #   POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB
-    #   REDIS_PASSWORD
-    #   MYSQL_ROOT_PASSWORD / MYSQL_DATABASE
-
-    - name: Start service containers
-      if: steps.config.outputs.setup_services == 'true'
-      shell: bash
-      working-directory: ${{ inputs.working_directory }}
-      env:
-        SERVICES_JSON: ${{ steps.config.outputs.services_json }}
-      run: |
-        echo "🚀 Starting service containers..."
-
-        # Parse services JSON and start each container
-        echo "$SERVICES_JSON" | jq -r 'to_entries[] | @base64' | while read -r service; do
-          # Decode service config
-          SERVICE_NAME=$(echo "$service" | base64 -d | jq -r '.key')
-          SERVICE_CONFIG=$(echo "$service" | base64 -d | jq -r '.value')
-
-          echo "  Starting $SERVICE_NAME..."
-
-          # Get image
-          IMAGE=$(echo "$SERVICE_CONFIG" | jq -r '.image // empty')
-          if [[ -z "$IMAGE" ]]; then
-            # Use service name as image with default tag
-            case "$SERVICE_NAME" in
-              postgres) IMAGE="postgres:16-alpine" ;;
-              redis) IMAGE="redis:7-alpine" ;;
-              nats) IMAGE="nats:2.10-alpine" ;;
-              mysql) IMAGE="mysql:8" ;;
-              mongo) IMAGE="mongo:7" ;;
-              *) IMAGE="$SERVICE_NAME:latest" ;;
-            esac
-          fi
-
-          # Get port
-          PORT=$(echo "$SERVICE_CONFIG" | jq -r '.port // empty')
-          PORT_ARG=""
-          if [[ -n "$PORT" ]]; then
-            PORT_ARG="-p $PORT:$PORT"
-          fi
-
-          # Get args
-          ARGS=$(echo "$SERVICE_CONFIG" | jq -r '.args // [] | join(" ")')
-
-          # Build environment variables
-          ENV_ARGS=""
-
-          # Service-specific env from config
-          ENV_CONFIG=$(echo "$SERVICE_CONFIG" | jq -r '.env // {} | to_entries[] | "-e \(.key)=\(.value)"' 2>/dev/null || echo "")
-          if [[ -n "$ENV_CONFIG" ]]; then
-            ENV_ARGS="$ENV_CONFIG"
-          fi
-
-          # Override with actual environment variables
-          case "$SERVICE_NAME" in
-            postgres)
-              [[ -n "${POSTGRES_USER:-}" ]] && ENV_ARGS="$ENV_ARGS -e POSTGRES_USER=$POSTGRES_USER"
-              [[ -n "${POSTGRES_PASSWORD:-}" ]] && ENV_ARGS="$ENV_ARGS -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD"
-              [[ -n "${POSTGRES_DB:-}" ]] && ENV_ARGS="$ENV_ARGS -e POSTGRES_DB=$POSTGRES_DB"
-              ;;
-            redis)
-              [[ -n "${REDIS_PASSWORD:-}" ]] && ENV_ARGS="$ENV_ARGS -e REDIS_PASSWORD=$REDIS_PASSWORD"
-              ;;
-            mysql)
-              [[ -n "${MYSQL_ROOT_PASSWORD:-}" ]] && ENV_ARGS="$ENV_ARGS -e MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD"
-              [[ -n "${MYSQL_DATABASE:-}" ]] && ENV_ARGS="$ENV_ARGS -e MYSQL_DATABASE=$MYSQL_DATABASE"
-              ;;
-          esac
-
-          # Get healthcheck
-          HEALTHCHECK=$(echo "$SERVICE_CONFIG" | jq -r '.healthcheck // empty')
-
-          # Start container
-          CONTAINER_NAME="test-$SERVICE_NAME"
-          docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
-
-          # shellcheck disable=SC2086
-          docker run -d \
-            --name "$CONTAINER_NAME" \
-            $PORT_ARG \
-            $ENV_ARGS \
-            "$IMAGE" \
-            $ARGS
-
-          echo "    ✓ $SERVICE_NAME started (container: $CONTAINER_NAME)"
-        done
-
-        # Wait for services to be healthy
-        echo ""
-        echo "⏳ Waiting for services to be ready..."
-        sleep 5
-
-        # Service-specific health checks
-        SERVICE_NAMES="${{ steps.config.outputs.service_names }}"
-
-        if echo "$SERVICE_NAMES" | grep -q "postgres"; then
-          echo "  Checking PostgreSQL..."
-          for i in {1..30}; do
-            if docker exec test-postgres pg_isready -U "${POSTGRES_USER:-postgres}" >/dev/null 2>&1; then
-              echo "    ✓ PostgreSQL ready"
-              break
-            fi
-            sleep 1
-          done
-        fi
-
-        if echo "$SERVICE_NAMES" | grep -q "redis"; then
-          echo "  Checking Redis..."
-          for i in {1..30}; do
-            if docker exec test-redis redis-cli ping >/dev/null 2>&1; then
-              echo "    ✓ Redis ready"
-              break
-            fi
-            sleep 1
-          done
-        fi
-
-        echo ""
-        echo "✅ All services started"
 
     # ══════════════════════════════════════════════════════════════════════════
     # 📊 SUMMARY
@@ -688,8 +565,11 @@ runs:
           echo "| Docker | ✅ Configured |" >> $GITHUB_STEP_SUMMARY
         fi
 
-        if [[ "${{ steps.config.outputs.setup_services }}" == "true" ]]; then
-          echo "| Services | ✅ ${{ steps.config.outputs.service_names }} |" >> $GITHUB_STEP_SUMMARY
+        SERVICES=""
+        [[ "${{ steps.config.outputs.service_redis }}" == "true" ]] && SERVICES="${SERVICES}redis "
+        [[ "${{ steps.config.outputs.service_nats }}"  == "true" ]] && SERVICES="${SERVICES}nats "
+        if [[ -n "$SERVICES" ]]; then
+          echo "| Services | ✅ ${SERVICES% } |" >> $GITHUB_STEP_SUMMARY
         fi
 
         if [[ "${{ steps.config.outputs.setup_system_packages }}" == "true" ]]; then
