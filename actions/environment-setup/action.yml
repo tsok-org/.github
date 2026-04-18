@@ -372,6 +372,7 @@ runs:
         #                         # on small-memory runners with many big
         #                         # test binaries; set to 1 to force serial)
         #     linker: lld | mold  # override the default linker (memory-lighter)
+        #     coverage: true      # install cargo-llvm-cov for lcov output
         # The Rust toolchain itself is expected to be managed by
         # rust-toolchain.toml at the repo root (rustup auto-installs on
         # first cargo invocation). This section wires up caching,
@@ -383,11 +384,13 @@ runs:
           RUST_DIAG=$(yq -e '.rust.diagnostics // false' "$CONFIG_FILE" 2>/dev/null || echo "false")
           RUST_JOBS=$(yq -e '.rust.build_jobs // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
           RUST_LINKER=$(yq -e '.rust.linker // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+          RUST_COVERAGE=$(yq -e '.rust.coverage // false' "$CONFIG_FILE" 2>/dev/null || echo "false")
           echo "rust_cache=$RUST_CACHE" >> "$GITHUB_OUTPUT"
           echo "rust_diagnostics=$RUST_DIAG" >> "$GITHUB_OUTPUT"
           echo "rust_build_jobs=$RUST_JOBS" >> "$GITHUB_OUTPUT"
           echo "rust_linker=$RUST_LINKER" >> "$GITHUB_OUTPUT"
-          echo "  ✓ Rust: cache=$RUST_CACHE, diagnostics=$RUST_DIAG, build_jobs=${RUST_JOBS:-auto}, linker=${RUST_LINKER:-default}"
+          echo "rust_coverage=$RUST_COVERAGE" >> "$GITHUB_OUTPUT"
+          echo "  ✓ Rust: cache=$RUST_CACHE, diagnostics=$RUST_DIAG, build_jobs=${RUST_JOBS:-auto}, linker=${RUST_LINKER:-default}, coverage=$RUST_COVERAGE"
         else
           echo "setup_rust=false" >> "$GITHUB_OUTPUT"
         fi
@@ -549,6 +552,16 @@ runs:
         # Share cache across all jobs in the same workflow, not just the
         # branch. This lets parallel workflows re-use each other's caches.
         shared-key: "rust-workspace"
+
+    - name: Install cargo-llvm-cov (for Rust coverage)
+      if: steps.config.outputs.setup_rust == 'true' && steps.config.outputs.rust_coverage == 'true' && runner.os == 'Linux'
+      # taiki-e/install-action downloads pre-built binaries — no compile cost.
+      # cargo-llvm-cov generates lcov.info via LLVM profiling instrumentation;
+      # requires the `llvm-tools-preview` rustup component (callers should
+      # add it to rust-toolchain.toml).
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-llvm-cov
 
     - name: Apply Rust build knobs (CARGO_BUILD_JOBS, linker)
       if: steps.config.outputs.setup_rust == 'true'
@@ -760,5 +773,5 @@ runs:
         fi
 
         if [[ "${{ steps.config.outputs.setup_rust }}" == "true" ]]; then
-          echo "| Rust | ✅ cache=${{ steps.config.outputs.rust_cache }}, diagnostics=${{ steps.config.outputs.rust_diagnostics }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Rust | ✅ cache=${{ steps.config.outputs.rust_cache }}, diagnostics=${{ steps.config.outputs.rust_diagnostics }}, coverage=${{ steps.config.outputs.rust_coverage }} |" >> $GITHUB_STEP_SUMMARY
         fi

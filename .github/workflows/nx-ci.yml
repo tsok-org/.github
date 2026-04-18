@@ -420,10 +420,15 @@ jobs:
             CMD="$CMD run-many"
           fi
 
-          CMD="$CMD -t test --parallel=${{ inputs.parallel }}"
-
+          # When coverage: true, run the project's `test:coverage` target
+          # (e.g., `cargo llvm-cov` for Rust, `jest --coverage` for TS)
+          # instead of the plain `test` target. This avoids the old
+          # approach of appending `--coverage` to the test command, which
+          # broke for cargo (cargo test has no --coverage flag).
           if [ "${{ inputs.coverage }}" == "true" ]; then
-            CMD="$CMD --coverage"
+            CMD="$CMD -t test:coverage --parallel=${{ inputs.parallel }}"
+          else
+            CMD="$CMD -t test --parallel=${{ inputs.parallel }}"
           fi
 
           if [ -n "${{ inputs.exclude_projects }}" ]; then
@@ -440,6 +445,22 @@ jobs:
       # ════════════════════════════════════════════════════════════════════════
       # 📊 COVERAGE UPLOAD (OPTIONAL)
       # ════════════════════════════════════════════════════════════════════════
+
+      - name: Upload coverage artifacts
+        if: inputs.coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          # Glob across the workspace for typical coverage outputs.
+          # Rust (cargo-llvm-cov): target/lcov.info
+          # TS (jest): coverage/lcov.info
+          # Generic: coverage/, target/lcov.info
+          path: |
+            coverage/**
+            **/lcov.info
+            **/target/llvm-cov/**
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Upload coverage to Codecov
         if: inputs.coverage && inputs.coverage_reporter == 'codecov'
