@@ -277,24 +277,27 @@ on:
 env:
   NX_CLOUD_ACCESS_TOKEN: ${{ secrets.nx_cloud_access_token }}
   NX_NO_CLOUD: ${{ inputs.nx_cloud_enabled == false && 'true' || '' }}
-  # Verbose diagnostic env: only set when the caller passes verbose: true.
-  # Expressions resolve to '' (empty) when verbose is false, which for env
-  # vars is treated as unset by cargo/nx.
+  # Verbose diagnostic env. IMPORTANT: empty-string values are still "set"
+  # from the child-process perspective, and cargo strictly validates these
+  # — e.g. CARGO_TERM_VERBOSE="" fails with:
+  #   error in environment variable `CARGO_TERM_VERBOSE`: provided string
+  #   was not `true` or `false`
+  # So in the non-verbose branch of each ternary we emit an explicit
+  # valid "default" value rather than ''.
   #
-  # NOTE: we intentionally do NOT set NX_VERBOSE_LOGGING here. That env var
+  # We intentionally do NOT set NX_VERBOSE_LOGGING here. That env var
   # causes Nx to print diagnostic lines like "[isolated-plugin] spawned
   # worker ..." to stdout, which corrupts the JSON output of tooling calls
-  # like `nx show projects --json` that run inside this workflow (the
-  # "Get affected projects" step). Verbosity for the actual lint/test/build
-  # tasks is achieved by the `--verbose` CLI flag appended to those
-  # commands specifically (see below).
-  RUST_BACKTRACE: ${{ inputs.verbose && '1' || '' }}
-  CARGO_TERM_VERBOSE: ${{ inputs.verbose && 'true' || '' }}
-  CARGO_TERM_COLOR: ${{ inputs.verbose && 'always' || '' }}
-  # Disable terminal rewriting so per-task output survives in CI logs
-  # instead of getting collapsed into a single updating line. Doesn't
-  # affect JSON output of tooling calls.
-  NX_TASKS_RUNNER_DYNAMIC_OUTPUT: ${{ inputs.verbose && 'false' || '' }}
+  # like `nx show projects --json` in the "Get affected projects" step.
+  # Verbosity for lint/test/build is achieved by the `--verbose` CLI flag
+  # appended to those commands (see below).
+  RUST_BACKTRACE: ${{ inputs.verbose && '1' || '0' }}
+  CARGO_TERM_VERBOSE: ${{ inputs.verbose && 'true' || 'false' }}
+  CARGO_TERM_COLOR: ${{ inputs.verbose && 'always' || 'auto' }}
+  # false = keep terminal rewriting on (Nx's default behavior, preserves
+  # the summary-line UX). true = verbose mode turns it off so per-task
+  # output isn't collapsed in CI logs.
+  NX_TASKS_RUNNER_DYNAMIC_OUTPUT: ${{ inputs.verbose && 'false' || 'true' }}
 
 jobs:
   ci:
