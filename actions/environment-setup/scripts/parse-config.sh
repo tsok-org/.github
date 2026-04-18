@@ -118,10 +118,14 @@ if [[ "$NODE_CONFIG" != "false" ]] && should_setup "node"; then
         fi
     fi
 
-    INSTALL=$(yq_get '.node.install // true' "true")
+    # yq-go's `//` alternative triggers on null OR false, so
+    # `.node.install // true` silently flips a user's explicit `false` to
+    # `true`. Drop the `//` and let yq_get's bash-side fallback handle the
+    # truly-missing case via null detection. Same pattern for all booleans.
+    INSTALL=$(yq_get '.node.install' "true")
     out "node_install=$INSTALL"
 
-    FROZEN=$(yq_get '.node.frozen_lockfile // true' "true")
+    FROZEN=$(yq_get '.node.frozen_lockfile' "true")
     out "node_frozen_lockfile=$FROZEN"
 
     echo "  ✓ Node.js: version=$NODE_VERSION"
@@ -207,7 +211,7 @@ DOCKER_CONFIG=$(yq_get '.docker // false' "false")
 if [[ "$DOCKER_CONFIG" != "false" ]] && should_setup "docker"; then
     out "setup_docker=true"
 
-    BUILDX=$(yq_get '.docker.buildx // true' "true")
+    BUILDX=$(yq_get '.docker.buildx' "true")
     out "docker_buildx=$BUILDX"
 
     PLATFORMS=$(yq_get '.docker.platforms // ["linux/amd64"] | join(",")' "linux/amd64")
@@ -241,11 +245,11 @@ fi
 RUST_CONFIG=$(yq_get '.rust // false' "false")
 if [[ "$RUST_CONFIG" != "false" ]] && should_setup "rust"; then
     out "setup_rust=true"
-    RUST_CACHE=$(yq_get '.rust.cache // true' "true")
-    RUST_DIAG=$(yq_get '.rust.diagnostics // false' "false")
+    RUST_CACHE=$(yq_get '.rust.cache' "true")
+    RUST_DIAG=$(yq_get '.rust.diagnostics' "false")
     RUST_JOBS=$(yq_get '.rust.build_jobs // ""' "")
     RUST_LINKER=$(yq_get '.rust.linker // ""' "")
-    RUST_COVERAGE=$(yq_get '.rust.coverage // false' "false")
+    RUST_COVERAGE=$(yq_get '.rust.coverage' "false")
     out "rust_cache=$RUST_CACHE"
     out "rust_diagnostics=$RUST_DIAG"
     out "rust_build_jobs=$RUST_JOBS"
@@ -284,8 +288,8 @@ if [[ "$GO_CONFIG" != "false" ]] && should_setup "go"; then
         fi
         out "go_version=$GO_VERSION"
         out "go_version_file=$GO_VERSION_FILE"
-        GO_CACHE=$(yq_get '.go.cache // true' "true")
-        GO_MODULES=$(yq_get '.go.modules // true' "true")
+        GO_CACHE=$(yq_get '.go.cache' "true")
+        GO_MODULES=$(yq_get '.go.modules' "true")
         out "go_cache=$GO_CACHE"
         out "go_modules=$GO_MODULES"
     fi
@@ -303,8 +307,8 @@ if [[ "$C_CONFIG" != "false" ]] && should_setup "c"; then
     out "setup_c=true"
 
     C_TOOLCHAIN=$(yq_get '.c.toolchain // "gcc"' "gcc")
-    C_CMAKE=$(yq_get '.c.cmake // false' "false")
-    C_PKGCONFIG=$(yq_get '.c.pkg_config // false' "false")
+    C_CMAKE=$(yq_get '.c.cmake' "false")
+    C_PKGCONFIG=$(yq_get '.c.pkg_config' "false")
     C_EXTRA_PACKAGES=$(yq_get '.c.packages // [] | join(" ")' "")
 
     # Build the final apt package list.

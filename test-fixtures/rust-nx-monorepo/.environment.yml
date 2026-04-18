@@ -1,0 +1,21 @@
+version: "1"
+node:
+  version: ".node-version"
+  package_manager: pnpm
+  install: true
+  cache: true
+rust:
+  cache: true
+  diagnostics: true
+  coverage: true
+  build_jobs: 1
+system_packages:
+  - libcurl4-openssl-dev
+  - libssl-dev
+  - pkg-config
+docker:
+  buildx: true
+  platforms:
+    - linux/amd64
+    - linux/arm64
+  registry: ghcr.io

@@ -1,0 +1,17 @@
+version: "1"
+rust:
+  cache: true
+  coverage: false
+go:
+  version: "1.22"
+  cache: true
+c:
+  toolchain: gcc
+  cmake: true
+  pkg_config: true
+  packages:
+    - libpq-dev
+node:
+  version: "20"
+  package_manager: npm
+  install: false
