@@ -180,7 +180,7 @@
 
     "services": {
       "type": "object",
-      "description": "External daemons installed onto the runner's PATH so tests can spawn them as subprocesses (via Command::new(\"redis-server\") etc.). Each key toggles a specific service binary. Linux runners only for now.",
+      "description": "External daemons the runner needs for tests. `redis` and `nats` are installed onto PATH so tests can spawn them as subprocesses; `postgres` and `mysql` are installed AND auto-started with a test user/database, and the connection URL is exported as an env var for tests to read. Linux runners only for now.",
       "additionalProperties": false,
       "properties": {
         "redis": {
@@ -190,6 +190,14 @@
         "nats": {
           "type": "boolean",
           "description": "Install `nats-server` by downloading the latest stable release from github.com/nats-io/nats-server."
+        },
+        "postgres": {
+          "type": "boolean",
+          "description": "Install PostgreSQL via apt, start the daemon, create a `mcpg` user + `mcpg_test` database, and export `POSTGRES_TEST_URL=postgres://mcpg:mcpg@localhost/mcpg_test` so tests can connect."
+        },
+        "mysql": {
+          "type": "boolean",
+          "description": "Install MySQL via apt, start the daemon, create a `mcpg` user + `mcpg_test` database, and export `MYSQL_TEST_URL=mysql://mcpg:mcpg@127.0.0.1/mcpg_test` so tests can connect."
         }
       }
     },
