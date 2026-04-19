@@ -579,19 +579,35 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        echo "🧰 Installing MySQL via apt"
-        # GitHub's ubuntu-latest ships with mysql-server pre-installed on most
-        # releases; ensure it's actually available and running.
+        echo "🧰 Installing/starting MySQL"
+        # GitHub's ubuntu-latest ships with mysql-server pre-installed; a
+        # fresh apt install covers clean images.
         if ! command -v mysqld >/dev/null 2>&1; then
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends mysql-server
         fi
         sudo service mysql start
-        for i in {1..20}; do
-          if sudo mysql -e 'SELECT 1' >/dev/null 2>&1; then break; fi
+        # Wait up to 30s for MySQL to accept connections. We probe with
+        # several auth modes because GitHub's pre-installed MySQL uses
+        # root/root while a fresh apt install on ubuntu:24.04 uses
+        # auth_socket (sudo-only) — and we have to tolerate both.
+        MYSQL_ROOT=""
+        for _ in {1..30}; do
+          if mysql -uroot -proot -e 'SELECT 1' >/dev/null 2>&1; then
+            MYSQL_ROOT="mysql -uroot -proot"
+            break
+          fi
+          if sudo mysql -e 'SELECT 1' >/dev/null 2>&1; then
+            MYSQL_ROOT="sudo mysql"
+            break
+          fi
           sleep 1
         done
-        sudo mysql -v <<'SQL'
+        if [[ -z "$MYSQL_ROOT" ]]; then
+          echo "::error::cannot authenticate to local MySQL as root (tried root/root and auth_socket)"
+          exit 1
+        fi
+        $MYSQL_ROOT -v <<'SQL'
           CREATE USER IF NOT EXISTS 'mcpg'@'127.0.0.1' IDENTIFIED BY 'mcpg';
           CREATE USER IF NOT EXISTS 'mcpg'@'localhost' IDENTIFIED BY 'mcpg';
           CREATE DATABASE IF NOT EXISTS mcpg_test;
