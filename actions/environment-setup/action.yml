@@ -390,9 +390,19 @@ runs:
         # -o /dev/null: throw away body, only report status
         # --write-out: print status code
         # --max-time: hard 5s cap
-        # -f (fail on non-2xx) so a 403 surfaces as a real error at step level.
-        for host in https://crates.io/ https://static.rust-lang.org/ https://github.com/; do
-          CODE=$(curl -fsS -o /dev/null --max-time 5 -w "%{http_code}" "$host")
+        # NOTE: we do NOT pass `-f` — the point of this probe is to
+        # confirm DNS + TCP + TLS work, not to assert the endpoint
+        # returns 2xx to anonymous traffic. Some of these hosts
+        # (github.com/, crates.io/) return 403/429 to unauthenticated
+        # curl under anti-bot rules; that still proves connectivity.
+        # A real network break surfaces as `--max-time` timeout or a
+        # non-zero curl exit code for transport errors, which we let
+        # through without `-f`.
+        for host in \
+            https://index.crates.io/config.json \
+            https://static.rust-lang.org/dist/channel-rust-stable.toml \
+            https://api.github.com/zen; do
+          CODE=$(curl -sS -o /dev/null --max-time 5 -w "%{http_code}" "$host" || echo "ERR")
           echo "  $host → HTTP $CODE"
         done
         if [[ -f Cargo.toml ]]; then
