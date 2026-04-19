@@ -90,6 +90,8 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
     out "setup_c=false"
     out "service_redis=false"
     out "service_nats=false"
+    out "service_postgres=false"
+    out "service_mysql=false"
     exit 0
 fi
 
@@ -352,10 +354,15 @@ fi
 # ------------------------------------------------------------------------------
 SVC_REDIS=$(yq_get '.services.redis' "false")
 SVC_NATS=$(yq_get '.services.nats' "false")
+SVC_POSTGRES=$(yq_get '.services.postgres' "false")
+SVC_MYSQL=$(yq_get '.services.mysql' "false")
 out "service_redis=$SVC_REDIS"
 out "service_nats=$SVC_NATS"
-if [[ "$SVC_REDIS" == "true" || "$SVC_NATS" == "true" ]]; then
-    echo "  ✓ Services: redis=$SVC_REDIS, nats=$SVC_NATS"
+out "service_postgres=$SVC_POSTGRES"
+out "service_mysql=$SVC_MYSQL"
+if [[ "$SVC_REDIS" == "true" || "$SVC_NATS" == "true" \
+   || "$SVC_POSTGRES" == "true" || "$SVC_MYSQL" == "true" ]]; then
+    echo "  ✓ Services: redis=$SVC_REDIS, nats=$SVC_NATS, postgres=$SVC_POSTGRES, mysql=$SVC_MYSQL"
 fi
 
 echo "✅ Configuration parsed successfully"

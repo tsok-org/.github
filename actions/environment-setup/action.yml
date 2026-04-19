@@ -103,6 +103,12 @@ outputs:
   service_nats:
     description: "Whether nats-server was installed onto PATH (true/false)"
     value: ${{ steps.config.outputs.service_nats }}
+  service_postgres:
+    description: "Whether PostgreSQL was installed + started (true/false). When true, POSTGRES_TEST_URL is set in the environment."
+    value: ${{ steps.config.outputs.service_postgres }}
+  service_mysql:
+    description: "Whether MySQL was installed + started (true/false). When true, MYSQL_TEST_URL is set in the environment."
+    value: ${{ steps.config.outputs.service_mysql }}
   setup_system_packages:
     description: "Whether apt system_packages were installed (true/false)"
     value: ${{ steps.config.outputs.setup_system_packages }}
@@ -547,11 +553,60 @@ runs:
         rm -rf "$TMP"
         nats-server --version
 
-    - name: Warn on non-Linux services request
-      if: (steps.config.outputs.service_redis == 'true' || steps.config.outputs.service_nats == 'true') && runner.os != 'Linux'
+    - name: Install + start PostgreSQL
+      if: steps.config.outputs.service_postgres == 'true' && runner.os == 'Linux'
       shell: bash
       run: |
-        echo "::warning::services (redis/nats) currently install on Linux only; ignored on ${{ runner.os }}."
+        set -euo pipefail
+        echo "🧰 Installing PostgreSQL via apt"
+        sudo apt-get update -y
+        sudo apt-get install -y --no-install-recommends postgresql postgresql-contrib
+        sudo service postgresql start
+        # Wait up to 20s for postgres to accept connections.
+        for i in {1..20}; do
+          if sudo -u postgres psql -c 'SELECT 1' >/dev/null 2>&1; then break; fi
+          sleep 1
+        done
+        sudo -u postgres psql -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE USER mcpg WITH PASSWORD 'mcpg' CREATEDB;
+          CREATE DATABASE mcpg_test OWNER mcpg;
+        SQL
+        echo "POSTGRES_TEST_URL=postgres://mcpg:mcpg@localhost/mcpg_test" >> "$GITHUB_ENV"
+        psql --version
+
+    - name: Install + start MySQL
+      if: steps.config.outputs.service_mysql == 'true' && runner.os == 'Linux'
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "🧰 Installing MySQL via apt"
+        # GitHub's ubuntu-latest ships with mysql-server pre-installed on most
+        # releases; ensure it's actually available and running.
+        if ! command -v mysqld >/dev/null 2>&1; then
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends mysql-server
+        fi
+        sudo service mysql start
+        for i in {1..20}; do
+          if sudo mysql -e 'SELECT 1' >/dev/null 2>&1; then break; fi
+          sleep 1
+        done
+        sudo mysql -v <<'SQL'
+          CREATE USER IF NOT EXISTS 'mcpg'@'127.0.0.1' IDENTIFIED BY 'mcpg';
+          CREATE USER IF NOT EXISTS 'mcpg'@'localhost' IDENTIFIED BY 'mcpg';
+          CREATE DATABASE IF NOT EXISTS mcpg_test;
+          GRANT ALL PRIVILEGES ON mcpg_test.* TO 'mcpg'@'127.0.0.1';
+          GRANT ALL PRIVILEGES ON mcpg_test.* TO 'mcpg'@'localhost';
+          FLUSH PRIVILEGES;
+        SQL
+        echo "MYSQL_TEST_URL=mysql://mcpg:mcpg@127.0.0.1/mcpg_test" >> "$GITHUB_ENV"
+        mysql --version
+
+    - name: Warn on non-Linux services request
+      if: (steps.config.outputs.service_redis == 'true' || steps.config.outputs.service_nats == 'true' || steps.config.outputs.service_postgres == 'true' || steps.config.outputs.service_mysql == 'true') && runner.os != 'Linux'
+      shell: bash
+      run: |
+        echo "::warning::services (redis/nats/postgres/mysql) currently install on Linux only; ignored on ${{ runner.os }}."
 
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -587,8 +642,10 @@ runs:
         fi
 
         SERVICES=""
-        [[ "${{ steps.config.outputs.service_redis }}" == "true" ]] && SERVICES="${SERVICES}redis "
-        [[ "${{ steps.config.outputs.service_nats }}"  == "true" ]] && SERVICES="${SERVICES}nats "
+        [[ "${{ steps.config.outputs.service_redis }}"    == "true" ]] && SERVICES="${SERVICES}redis "
+        [[ "${{ steps.config.outputs.service_nats }}"     == "true" ]] && SERVICES="${SERVICES}nats "
+        [[ "${{ steps.config.outputs.service_postgres }}" == "true" ]] && SERVICES="${SERVICES}postgres "
+        [[ "${{ steps.config.outputs.service_mysql }}"    == "true" ]] && SERVICES="${SERVICES}mysql "
         if [[ -n "$SERVICES" ]]; then
           echo "| Services | ✅ ${SERVICES% } |" >> $GITHUB_STEP_SUMMARY
         fi

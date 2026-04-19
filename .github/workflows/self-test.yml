@@ -232,6 +232,8 @@ jobs:
           assert "setup_system_packages=false"
           assert "service_redis=false"
           assert "service_nats=false"
+          assert "service_postgres=false"
+          assert "service_mysql=false"
           echo "node-only: single-language path clean."
 
       - name: Assert outputs (python-poetry)
