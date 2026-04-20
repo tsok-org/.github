@@ -623,6 +623,12 @@ runs:
           CREATE DATABASE IF NOT EXISTS mcpg_test;
           GRANT ALL PRIVILEGES ON mcpg_test.* TO 'mcpg'@'127.0.0.1';
           GRANT ALL PRIVILEGES ON mcpg_test.* TO 'mcpg'@'localhost';
+          -- PROCESS is a server-wide privilege; required so cancellation
+          -- paths in SQL-binding integration tests can `KILL QUERY` their
+          -- own sessions (MySQL 8 rejects KILL without PROCESS). Safe to
+          -- grant on an ephemeral CI DB that only the test user touches.
+          GRANT PROCESS ON *.* TO 'mcpg'@'127.0.0.1';
+          GRANT PROCESS ON *.* TO 'mcpg'@'localhost';
           FLUSH PRIVILEGES;
         SQL
         echo "MYSQL_TEST_URL=mysql://mcpg:mcpg@127.0.0.1/mcpg_test" >> "$GITHUB_ENV"

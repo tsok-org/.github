@@ -124,6 +124,24 @@ on:
         type: boolean
         default: false
 
+      test_integration:
+        description: |
+          Run the `test:integration` Nx target on projects that define it.
+          Intended for CD-gated lanes (merges / PRs targeting main / develop
+          / next) where integration suites against real databases, services,
+          and other heavy fixtures should run. Feature-branch PRs typically
+          keep this off so daily iteration stays fast.
+
+          Projects without a `test:integration` target are skipped silently
+          (nx reports the target is missing and moves on).
+
+          Services that integration suites depend on (postgres, mysql,
+          redis, nats, etc.) must be enabled via `environment_skip` /
+          `.environment.yml` — this input only runs the target.
+        required: false
+        type: boolean
+        default: false
+
       custom_tasks:
         description: |
           Additional custom tasks to run (comma-separated).
@@ -443,6 +461,39 @@ jobs:
           # `coverage` input on this workflow only gates whether we *upload*
           # those lcov artifacts downstream, not which target we run.
           CMD="$CMD -t test --parallel=${{ inputs.parallel }}"
+
+          if [ -n "${{ inputs.exclude_projects }}" ]; then
+            CMD="$CMD --exclude=${{ inputs.exclude_projects }}"
+          fi
+
+          if [ "${{ inputs.verbose }}" == "true" ]; then
+            CMD="$CMD --verbose"
+          fi
+
+          echo "Running: $CMD"
+          $CMD
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 🧪 TEST:INTEGRATION (OPTIONAL, CD-GATED)
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Run test:integration
+        id: test_integration
+        if: inputs.test_integration
+        run: |
+          echo "🧪 Running test:integration..."
+          CMD="pnpm nx"
+
+          if [ "${{ inputs.affected_only }}" == "true" ]; then
+            CMD="$CMD affected"
+          else
+            CMD="$CMD run-many"
+          fi
+
+          # Projects without a `test:integration` target are skipped by Nx,
+          # so `run-many -t test:integration` is safe to run across every
+          # project even when only a subset declares the target.
+          CMD="$CMD -t test:integration --parallel=${{ inputs.parallel }}"
 
           if [ -n "${{ inputs.exclude_projects }}" ]; then
             CMD="$CMD --exclude=${{ inputs.exclude_projects }}"
