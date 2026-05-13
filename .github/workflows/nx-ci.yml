@@ -248,14 +248,13 @@ on:
       # ─────────────────────────────────────────────────────────────────────────
       runs_on:
         description: |
-          Runner selector — a single label. Two conventions are recognised:
-            • a GitHub-hosted runner name (`ubuntu-*`, `macos-*`, `windows-*`)
-              is used as-is.
-            • anything else is treated as a self-hosted label and the implicit
-              `self-hosted` label is added, so `lab-large-runners` resolves to
-              `[self-hosted, lab-large-runners]`.
-          Multi-label self-hosted selectors (e.g. `[self-hosted, linux, gpu]`)
-          aren't expressible with this scheme — extend the input if needed.
+          Runner label passed straight to `runs-on`. Any runner that
+          advertises this label can pick up the job — for self-hosted
+          runners that's the label you set in `config.sh --labels …`
+          (the agent always advertises `self-hosted` alongside it, so
+          a single custom label is enough to disambiguate). For
+          GitHub-hosted runners, use the usual names (`ubuntu-latest`,
+          `macos-14`, `windows-2022`, …).
         required: false
         type: string
         default: "ubuntu-latest"
@@ -347,7 +346,7 @@ env:
 jobs:
   ci:
     name: Lint, Test, Build
-    runs-on: ${{ (startsWith(inputs.runs_on, 'ubuntu-') || startsWith(inputs.runs_on, 'macos-') || startsWith(inputs.runs_on, 'windows-')) && inputs.runs_on || fromJSON(format('["self-hosted","{0}"]', inputs.runs_on)) }}
+    runs-on: ${{ inputs.runs_on }}
     timeout-minutes: ${{ inputs.timeout_minutes }}
 
     outputs:
