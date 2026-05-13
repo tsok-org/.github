@@ -124,20 +124,25 @@ on:
         type: boolean
         default: false
 
-      test_integration:
+      integration:
         description: |
-          Run the `test:integration` Nx target on projects that define it.
+          Run the `integration` Nx target on projects that define it.
           Intended for CD-gated lanes (merges / PRs targeting main / develop
           / next) where integration suites against real databases, services,
           and other heavy fixtures should run. Feature-branch PRs typically
           keep this off so daily iteration stays fast.
 
-          Projects without a `test:integration` target are skipped silently
+          Projects without an `integration` target are skipped silently
           (nx reports the target is missing and moves on).
 
           Services that integration suites depend on (postgres, mysql,
           redis, nats, etc.) must be enabled via `environment_skip` /
           `.environment.yml` — this input only runs the target.
+
+          **v2 rename:** this input was named `test_integration` in v1
+          and ran the `test:integration` target. Both renamed to the
+          unprefixed `integration` for naming uniformity with `lint`,
+          `test`, `build`, `e2e`.
         required: false
         type: boolean
         default: false
@@ -243,8 +248,13 @@ on:
       # ─────────────────────────────────────────────────────────────────────────
       runs_on:
         description: |
-          Runner to use for the job.
-          Example: "ubuntu-latest", "self-hosted", '["self-hosted", "linux"]'
+          Runner label passed straight to `runs-on`. Any runner that
+          advertises this label can pick up the job — for self-hosted
+          runners that's the label you set in `config.sh --labels …`
+          (the agent always advertises `self-hosted` alongside it, so
+          a single custom label is enough to disambiguate). For
+          GitHub-hosted runners, use the usual names (`ubuntu-latest`,
+          `macos-14`, `windows-2022`, …).
         required: false
         type: string
         default: "ubuntu-latest"
@@ -474,14 +484,14 @@ jobs:
           $CMD
 
       # ════════════════════════════════════════════════════════════════════════
-      # 🧪 TEST:INTEGRATION (OPTIONAL, CD-GATED)
+      # 🧪 INTEGRATION (OPTIONAL, CD-GATED)
       # ════════════════════════════════════════════════════════════════════════
 
-      - name: Run test:integration
-        id: test_integration
-        if: inputs.test_integration
+      - name: Run integration
+        id: integration
+        if: inputs.integration
         run: |
-          echo "🧪 Running test:integration..."
+          echo "🧪 Running integration..."
           CMD="pnpm nx"
 
           if [ "${{ inputs.affected_only }}" == "true" ]; then
@@ -490,10 +500,10 @@ jobs:
             CMD="$CMD run-many"
           fi
 
-          # Projects without a `test:integration` target are skipped by Nx,
-          # so `run-many -t test:integration` is safe to run across every
+          # Projects without an `integration` target are skipped by Nx,
+          # so `run-many -t integration` is safe to run across every
           # project even when only a subset declares the target.
-          CMD="$CMD -t test:integration --parallel=${{ inputs.parallel }}"
+          CMD="$CMD -t integration --parallel=${{ inputs.parallel }}"
 
           if [ -n "${{ inputs.exclude_projects }}" ]; then
             CMD="$CMD --exclude=${{ inputs.exclude_projects }}"

@@ -147,6 +147,45 @@ on:
         default: "linux/amd64"
 
       # ─────────────────────────────────────────────────────────────────────────
+      # Supply-chain (cosign / SBOM / SLSA provenance) — v2
+      # ─────────────────────────────────────────────────────────────────────────
+      # These flags toggle env / tool installation that a project's `publish`
+      # target (or whichever target nx release invokes) consumes. The
+      # cryptographic operations themselves run inside the project's publish
+      # script — the reusable workflow only sets up tooling + permissions.
+      #
+      # Caller responsibility: when `cosign_sign: true`, the caller MUST grant
+      # `permissions.id-token: write` so cosign keyless can mint a Fulcio cert
+      # bound to the workflow's OIDC token.
+      cosign_sign:
+        description: |
+          Install cosign on PATH and export COSIGN_EXPERIMENTAL=1 so the
+          project's publish target can sign each published OCI artifact with
+          keyless signing (GitHub OIDC -> Fulcio -> Rekor).
+          Caller must grant `permissions.id-token: write`.
+        required: false
+        type: boolean
+        default: false
+
+      sbom_attach:
+        description: |
+          Install syft on PATH so the project's publish target can generate
+          an SBOM and attach it as an OCI referrer (typically via
+          `cosign attach sbom`).
+        required: false
+        type: boolean
+        default: false
+
+      docker_provenance:
+        description: |
+          Export DOCKER_PROVENANCE=mode=max to the publish target's environment
+          so it can pass `--provenance=mode=max` to `docker buildx build`,
+          emitting a SLSA-style provenance attestation.
+        required: false
+        type: boolean
+        default: false
+
+      # ─────────────────────────────────────────────────────────────────────────
       # Release Configuration
       # ─────────────────────────────────────────────────────────────────────────
       dry_run:
@@ -195,8 +234,13 @@ on:
       # ─────────────────────────────────────────────────────────────────────────
       runs_on:
         description: |
-          Runner to use for the job.
-          Example: "ubuntu-latest", "self-hosted", '["self-hosted", "linux"]'
+          Runner label passed straight to `runs-on`. Any runner that
+          advertises this label can pick up the job — for self-hosted
+          runners that's the label you set in `config.sh --labels …`
+          (the agent always advertises `self-hosted` alongside it, so
+          a single custom label is enough to disambiguate). For
+          GitHub-hosted runners, use the usual names (`ubuntu-latest`,
+          `macos-14`, `windows-2022`, …).
         required: false
         type: string
         default: "ubuntu-latest"
@@ -361,6 +405,37 @@ jobs:
           registry: ${{ inputs.docker_registry }}
           username: ${{ secrets.docker_username || github.actor }}
           password: ${{ secrets.docker_password || github.token }}
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 🔐 SUPPLY-CHAIN TOOLING (CONDITIONAL)
+      # ════════════════════════════════════════════════════════════════════════
+      # cosign + syft are project-target dependencies, not workflow steps:
+      # we install them so the project's `publish` target can invoke them.
+
+      - name: Install cosign (keyless signing)
+        if: inputs.cosign_sign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Install syft (SBOM generator)
+        if: inputs.sbom_attach
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Export supply-chain env for publish targets
+        if: inputs.publish_docker
+        run: |
+          {
+            echo "COSIGN_SIGN=${{ inputs.cosign_sign }}"
+            echo "SBOM_ATTACH=${{ inputs.sbom_attach }}"
+            if [ "${{ inputs.docker_provenance }}" == "true" ]; then
+              echo "DOCKER_PROVENANCE=mode=max"
+            fi
+            if [ "${{ inputs.cosign_sign }}" == "true" ]; then
+              echo "COSIGN_EXPERIMENTAL=1"
+              echo "COSIGN_YES=true"
+            fi
+          } >> "$GITHUB_ENV"
 
       # ════════════════════════════════════════════════════════════════════════
       # 🚀 NX RELEASE
