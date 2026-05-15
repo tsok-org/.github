@@ -353,7 +353,12 @@ on:
         value: ${{ jobs.ci.outputs.affected_projects }}
 
 env:
-  NX_CLOUD_ACCESS_TOKEN: ${{ secrets.nx_cloud_access_token }}
+  # When nx_cloud_enabled is false, force a non-empty NX_CLOUD_ACCESS_TOKEN
+  # placeholder so callers' empty secret doesn't trigger Nx Cloud's
+  # "Invalid credentials" check at task-end. NX_NO_CLOUD=true + the
+  # placeholder + a per-command `--no-cloud` flag (added below) together
+  # short-circuit every cloud code path.
+  NX_CLOUD_ACCESS_TOKEN: ${{ secrets.nx_cloud_access_token || (inputs.nx_cloud_enabled == false && 'DISABLED' || '') }}
   NX_NO_CLOUD: ${{ inputs.nx_cloud_enabled == false && 'true' || '' }}
   # Verbose diagnostic env. IMPORTANT: empty-string values are still "set"
   # from the child-process perspective, and cargo strictly validates these
@@ -603,6 +608,15 @@ jobs:
             CMD="$CMD --verbose"
           fi
 
+          # v3.0.5: caller explicitly opted out of Nx Cloud → add the
+          # per-command flag. NX_NO_CLOUD alone wasn't enough — the
+          # @nx/s3-cache plugin's post-task hook still pinged cloud
+          # API and failed with "Invalid credentials" against empty
+          # NX_CLOUD_ACCESS_TOKEN.
+          if [ "${{ inputs.nx_cloud_enabled }}" == "false" ]; then
+            CMD="$CMD --no-cloud"
+          fi
+
           echo "Running: $CMD"
           $CMD
 
@@ -638,6 +652,15 @@ jobs:
             CMD="$CMD --verbose"
           fi
 
+          # v3.0.5: caller explicitly opted out of Nx Cloud → add the
+          # per-command flag. NX_NO_CLOUD alone wasn't enough — the
+          # @nx/s3-cache plugin's post-task hook still pinged cloud
+          # API and failed with "Invalid credentials" against empty
+          # NX_CLOUD_ACCESS_TOKEN.
+          if [ "${{ inputs.nx_cloud_enabled }}" == "false" ]; then
+            CMD="$CMD --no-cloud"
+          fi
+
           echo "Running: $CMD"
           $CMD
 
@@ -669,6 +692,15 @@ jobs:
 
           if [ "${{ inputs.verbose }}" == "true" ]; then
             CMD="$CMD --verbose"
+          fi
+
+          # v3.0.5: caller explicitly opted out of Nx Cloud → add the
+          # per-command flag. NX_NO_CLOUD alone wasn't enough — the
+          # @nx/s3-cache plugin's post-task hook still pinged cloud
+          # API and failed with "Invalid credentials" against empty
+          # NX_CLOUD_ACCESS_TOKEN.
+          if [ "${{ inputs.nx_cloud_enabled }}" == "false" ]; then
+            CMD="$CMD --no-cloud"
           fi
 
           echo "Running: $CMD"
@@ -737,6 +769,15 @@ jobs:
             CMD="$CMD --verbose"
           fi
 
+          # v3.0.5: caller explicitly opted out of Nx Cloud → add the
+          # per-command flag. NX_NO_CLOUD alone wasn't enough — the
+          # @nx/s3-cache plugin's post-task hook still pinged cloud
+          # API and failed with "Invalid credentials" against empty
+          # NX_CLOUD_ACCESS_TOKEN.
+          if [ "${{ inputs.nx_cloud_enabled }}" == "false" ]; then
+            CMD="$CMD --no-cloud"
+          fi
+
           echo "Running: $CMD"
           $CMD
 
@@ -765,6 +806,15 @@ jobs:
 
           if [ "${{ inputs.verbose }}" == "true" ]; then
             CMD="$CMD --verbose"
+          fi
+
+          # v3.0.5: caller explicitly opted out of Nx Cloud → add the
+          # per-command flag. NX_NO_CLOUD alone wasn't enough — the
+          # @nx/s3-cache plugin's post-task hook still pinged cloud
+          # API and failed with "Invalid credentials" against empty
+          # NX_CLOUD_ACCESS_TOKEN.
+          if [ "${{ inputs.nx_cloud_enabled }}" == "false" ]; then
+            CMD="$CMD --no-cloud"
           fi
 
           echo "Running: $CMD"
