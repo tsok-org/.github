@@ -435,6 +435,22 @@ jobs:
       - name: Set Nx SHAs for affected detection
         uses: nrwl/nx-set-shas@v4
 
+      # v3.0.3: prime git's well-known empty-tree object.
+      # nrwl/nx-set-shas falls back to `4b825dc642cb6eb9a060e54bf8d69288fbee4904`
+      # (the empty tree) when no last-successful workflow exists on the branch
+      # — typical for the very first workflow_dispatch / push CI run. Git knows
+      # this SHA only when the object is in the local object DB; otherwise
+      # `git diff <empty-tree-sha> HEAD` (which `nx affected` calls) errors
+      # with "Could not access". `hash-object -w -t tree` writes the empty
+      # tree if not already present, so subsequent diffs succeed.
+      # Idempotent: a no-op once primed.
+      - name: Prime git empty-tree object
+        shell: bash
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          git hash-object -w -t tree --stdin < /dev/null > /dev/null
+          echo "✅ empty tree primed: $(git rev-parse 4b825dc642cb6eb9a060e54bf8d69288fbee4904^{tree})"
+
       # ════════════════════════════════════════════════════════════════════════
       # 🛠️ ENVIRONMENT SETUP
       # ════════════════════════════════════════════════════════════════════════
