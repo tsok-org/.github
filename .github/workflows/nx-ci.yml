@@ -429,7 +429,12 @@ jobs:
       # 🛠️ ENVIRONMENT SETUP
       # ════════════════════════════════════════════════════════════════════════
 
-      - name: Setup environment
+      # ── Host mode: invoke the env-setup composite (legacy v1/v2 path) ────
+      # Reads .environment.yml, installs Node + Rust toolchain + apt deps
+      # + redis/nats/postgres/mysql servers on the host runner. Only fires
+      # when container_image is empty (the default).
+      - name: Setup environment (host mode)
+        if: inputs.container_image == ''
         uses: tsok-org/.github/actions/environment-setup@main
         with:
           config: ${{ inputs.environment_config }}
@@ -438,20 +443,71 @@ jobs:
           github_app_private_key: ${{ secrets.github_app_private_key }}
           skip: ${{ inputs.environment_skip }}
           only: ${{ inputs.environment_only }}
-          # v3: when container_image is set, the composite skips every
-          # install step (runtimes + apt + service binaries are already
-          # in the image) while keeping schema validation, env-var
-          # validation, Rust cache, Rust build knobs, and the summary.
           container_image: ${{ inputs.container_image }}
 
-      # When container_image is set, the composite skips setup-node →
-      # `pnpm install` never runs. Cover that path explicitly here so the
-      # nx commands below see a populated node_modules. Idempotent on
-      # host mode (composite already installed; this re-checks).
+      # ── Container mode: image bakes runtimes + tooling. Inline the few
+      # bits that the composite still does for host-mode callers (rust
+      # cache, linker flag, env-var sanity), then run pnpm install.
+      # No .environment.yml needed.
+      - name: Validate CI env vars (container mode)
+        if: inputs.container_image != ''
+        shell: bash
+        run: |
+          # Same checks the env-setup composite runs on host: cargo hard-errors
+          # on empty CARGO_TERM_* / RUST_BACKTRACE strings. Catch caller
+          # miswiring before cargo sees it.
+          fail=0
+          check_enum() {
+            local name="$1"; shift
+            local value="${!name-__unset__}"
+            if [[ "$value" == "__unset__" ]]; then return 0; fi
+            for allowed in "$@"; do
+              if [[ "$value" == "$allowed" ]]; then return 0; fi
+            done
+            echo "::error::Invalid $name=\"$value\". Expected one of: $*"
+            fail=1
+          }
+          check_enum CARGO_TERM_VERBOSE "true" "false"
+          check_enum CARGO_TERM_COLOR "auto" "always" "never"
+          check_enum RUST_BACKTRACE "0" "1" "full"
+          if [[ "$fail" -ne 0 ]]; then
+            echo "Bad CI env vars will make cargo reject the invocation."
+            exit 1
+          fi
+          echo "✅ CI env vars valid."
+
       - name: Install workspace dependencies (container mode)
         if: inputs.container_image != ''
         shell: bash
+        working-directory: ${{ inputs.working_directory }}
         run: pnpm install --frozen-lockfile
+
+      - name: Cache cargo registry + target (container mode)
+        if: inputs.container_image != ''
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: true
+          shared-key: "rust-workspace"
+
+      - name: Apply Rust linker flag (lld, container mode)
+        if: inputs.container_image != ''
+        shell: bash
+        run: |
+          # lld is baked into the build-env image; this just exports the
+          # cargo flag for the host triple. Scoped to host-only via
+          # CARGO_TARGET_<TRIPLE>_RUSTFLAGS so cross-compile targets
+          # (wasm32-wasip2, aarch64-*) keep their own linker contracts.
+          case "${{ runner.arch }}" in
+            X64)   HOST_TRIPLE="x86_64-unknown-linux-gnu" ;;
+            ARM64) HOST_TRIPLE="aarch64-unknown-linux-gnu" ;;
+            *)
+              echo "::warning::Unknown runner.arch='${{ runner.arch }}'; skipping linker flag."
+              exit 0
+              ;;
+          esac
+          HOST_ENV_KEY="CARGO_TARGET_$(echo "$HOST_TRIPLE" | tr '[:lower:]-' '[:upper:]_')_RUSTFLAGS"
+          echo "${HOST_ENV_KEY}=-C link-arg=-fuse-ld=lld" >> "$GITHUB_ENV"
+          echo "🦀 Using lld linker for $HOST_TRIPLE"
 
       # ════════════════════════════════════════════════════════════════════════
       # ☁️ NX CLOUD DISTRIBUTION (OPTIONAL)

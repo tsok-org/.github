@@ -394,7 +394,9 @@ jobs:
       # 🛠️ ENVIRONMENT SETUP
       # ════════════════════════════════════════════════════════════════════════
 
-      - name: Setup environment
+      # ── Host mode: env-setup composite (legacy path) ─────────────────────
+      - name: Setup environment (host mode)
+        if: inputs.container_image == ''
         uses: tsok-org/.github/actions/environment-setup@main
         with:
           config: ${{ inputs.environment_config }}
@@ -409,12 +411,34 @@ jobs:
           DOCKER_USERNAME: ${{ secrets.docker_username || github.actor }}
           DOCKER_PASSWORD: ${{ secrets.docker_password || github.token }}
 
-      # Container mode skips setup-node — install workspace deps explicitly
-      # so the downstream `nx release` invocation sees node_modules.
+      # ── Container mode: inline rust cache + linker, install pnpm deps. ──
       - name: Install workspace dependencies (container mode)
         if: inputs.container_image != ''
         shell: bash
+        working-directory: ${{ inputs.working_directory }}
         run: pnpm install --frozen-lockfile
+
+      - name: Cache cargo registry + target (container mode)
+        if: inputs.container_image != ''
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: true
+          shared-key: "rust-workspace"
+
+      - name: Apply Rust linker flag (lld, container mode)
+        if: inputs.container_image != ''
+        shell: bash
+        run: |
+          case "${{ runner.arch }}" in
+            X64)   HOST_TRIPLE="x86_64-unknown-linux-gnu" ;;
+            ARM64) HOST_TRIPLE="aarch64-unknown-linux-gnu" ;;
+            *)
+              echo "::warning::Unknown runner.arch='${{ runner.arch }}'; skipping linker flag."
+              exit 0
+              ;;
+          esac
+          HOST_ENV_KEY="CARGO_TARGET_$(echo "$HOST_TRIPLE" | tr '[:lower:]-' '[:upper:]_')_RUSTFLAGS"
+          echo "${HOST_ENV_KEY}=-C link-arg=-fuse-ld=lld" >> "$GITHUB_ENV"
 
       # ════════════════════════════════════════════════════════════════════════
       # 🔧 GIT CONFIGURATION
