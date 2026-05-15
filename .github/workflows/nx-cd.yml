@@ -346,6 +346,9 @@ jobs:
     defaults:
       run:
         working-directory: ${{ inputs.working_directory }}
+        # v3.0.2: see nx-ci.yml for rationale. Forces bash inside container
+        # mode (Debian images' default `sh` is dash and breaks `[[ ]]`/`==`).
+        shell: bash
 
     steps:
       # ════════════════════════════════════════════════════════════════════════

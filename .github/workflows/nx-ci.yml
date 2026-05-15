@@ -406,6 +406,16 @@ jobs:
     defaults:
       run:
         working-directory: ${{ inputs.working_directory }}
+        # v3.0.2: force bash for every step. When `container_image` is set
+        # and the image is debian/ubuntu-based, the default `run:` shell
+        # is POSIX `sh` (dash on Debian), which chokes on the `[[ ... ]]`
+        # and `==` bash idioms used throughout this file (and on inherited
+        # /usr/bin/[ behavior). Host-runner jobs default to `bash -e` and
+        # were never affected. Pinning bash here makes container-mode and
+        # host-mode behave identically. Any image used as container_image
+        # must include /usr/bin/bash — true for the standard build-env
+        # image and every Debian/Ubuntu/Alpine-with-bash base.
+        shell: bash
 
     steps:
       # ════════════════════════════════════════════════════════════════════════
