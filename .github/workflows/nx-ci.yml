@@ -428,6 +428,20 @@ jobs:
           fetch-depth: 0
           ref: ${{ inputs.ref || github.ref }}
 
+      # v3.0.4: pin git safe.directory globally.
+      # actions/checkout@v4 only sets safe.directory in a temporary HOME
+      # (per its source: `Temporarily overriding HOME=<tmp>`), so the
+      # exception evaporates by the next step. In container mode the
+      # workspace at /__w/<repo>/<repo> is owned by the host runner's
+      # uid but git inside the container runs as root → "dubious
+      # ownership" abort. Adding the wildcard exception to the
+      # persistent /root/.gitconfig (or wherever HOME resolves) survives
+      # across steps. Cheap no-op on host runners where ownership
+      # already matches.
+      - name: Configure git safe.directory
+        shell: bash
+        run: git config --global --add safe.directory '*'
+
       # ════════════════════════════════════════════════════════════════════════
       # 🔄 NX AFFECTED DETECTION
       # ════════════════════════════════════════════════════════════════════════

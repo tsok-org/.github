@@ -393,6 +393,11 @@ jobs:
           token: ${{ steps.token.outputs.token }}
           ref: ${{ inputs.ref || github.ref }}
 
+      # v3.0.4: pin git safe.directory (see nx-ci.yml for rationale).
+      - name: Configure git safe.directory
+        shell: bash
+        run: git config --global --add safe.directory '*'
+
       # ════════════════════════════════════════════════════════════════════════
       # 🛠️ ENVIRONMENT SETUP
       # ════════════════════════════════════════════════════════════════════════
