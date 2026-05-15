@@ -353,12 +353,14 @@ on:
         value: ${{ jobs.ci.outputs.affected_projects }}
 
 env:
-  # When nx_cloud_enabled is false, force a non-empty NX_CLOUD_ACCESS_TOKEN
-  # placeholder so callers' empty secret doesn't trigger Nx Cloud's
-  # "Invalid credentials" check at task-end. NX_NO_CLOUD=true + the
-  # placeholder + a per-command `--no-cloud` flag (added below) together
-  # short-circuit every cloud code path.
-  NX_CLOUD_ACCESS_TOKEN: ${{ secrets.nx_cloud_access_token || (inputs.nx_cloud_enabled == false && 'DISABLED' || '') }}
+  # When the caller passes nx_cloud_access_token, use it. Otherwise leave
+  # the env var as an empty string. (The earlier v3.0.5 attempt to use a
+  # "DISABLED" placeholder made things worse — @nx/s3-cache and similar
+  # Powerpack-licensed plugins parse the placeholder as a real CI token
+  # and reject it loudly at task-end.) The per-step "unset
+  # NX_CLOUD_ACCESS_TOKEN when empty" line below + the `--no-cloud` flag
+  # is what actually disables cloud authentication.
+  NX_CLOUD_ACCESS_TOKEN: ${{ secrets.nx_cloud_access_token }}
   NX_NO_CLOUD: ${{ inputs.nx_cloud_enabled == false && 'true' || '' }}
   # Verbose diagnostic env. IMPORTANT: empty-string values are still "set"
   # from the child-process perspective, and cargo strictly validates these
@@ -608,12 +610,16 @@ jobs:
             CMD="$CMD --verbose"
           fi
 
-          # v3.0.5: caller explicitly opted out of Nx Cloud → add the
-          # per-command flag. NX_NO_CLOUD alone wasn't enough — the
-          # @nx/s3-cache plugin's post-task hook still pinged cloud
-          # API and failed with "Invalid credentials" against empty
-          # NX_CLOUD_ACCESS_TOKEN.
+          # v3.0.6: when nx_cloud_enabled is false, fully disable any
+          # cloud interaction:
+          #   - unset NX_CLOUD_ACCESS_TOKEN entirely (an empty env var
+          #     still satisfies Nx's `if (env.X !== undefined)` checks
+          #     and triggers Powerpack-license probes in plugins like
+          #     @nx/s3-cache)
+          #   - append `--no-cloud` to the nx invocation so the CLI
+          #     also opts out at the command level (belt + suspenders)
           if [ "${{ inputs.nx_cloud_enabled }}" == "false" ]; then
+            unset NX_CLOUD_ACCESS_TOKEN
             CMD="$CMD --no-cloud"
           fi
 
@@ -652,12 +658,16 @@ jobs:
             CMD="$CMD --verbose"
           fi
 
-          # v3.0.5: caller explicitly opted out of Nx Cloud → add the
-          # per-command flag. NX_NO_CLOUD alone wasn't enough — the
-          # @nx/s3-cache plugin's post-task hook still pinged cloud
-          # API and failed with "Invalid credentials" against empty
-          # NX_CLOUD_ACCESS_TOKEN.
+          # v3.0.6: when nx_cloud_enabled is false, fully disable any
+          # cloud interaction:
+          #   - unset NX_CLOUD_ACCESS_TOKEN entirely (an empty env var
+          #     still satisfies Nx's `if (env.X !== undefined)` checks
+          #     and triggers Powerpack-license probes in plugins like
+          #     @nx/s3-cache)
+          #   - append `--no-cloud` to the nx invocation so the CLI
+          #     also opts out at the command level (belt + suspenders)
           if [ "${{ inputs.nx_cloud_enabled }}" == "false" ]; then
+            unset NX_CLOUD_ACCESS_TOKEN
             CMD="$CMD --no-cloud"
           fi
 
@@ -694,12 +704,16 @@ jobs:
             CMD="$CMD --verbose"
           fi
 
-          # v3.0.5: caller explicitly opted out of Nx Cloud → add the
-          # per-command flag. NX_NO_CLOUD alone wasn't enough — the
-          # @nx/s3-cache plugin's post-task hook still pinged cloud
-          # API and failed with "Invalid credentials" against empty
-          # NX_CLOUD_ACCESS_TOKEN.
+          # v3.0.6: when nx_cloud_enabled is false, fully disable any
+          # cloud interaction:
+          #   - unset NX_CLOUD_ACCESS_TOKEN entirely (an empty env var
+          #     still satisfies Nx's `if (env.X !== undefined)` checks
+          #     and triggers Powerpack-license probes in plugins like
+          #     @nx/s3-cache)
+          #   - append `--no-cloud` to the nx invocation so the CLI
+          #     also opts out at the command level (belt + suspenders)
           if [ "${{ inputs.nx_cloud_enabled }}" == "false" ]; then
+            unset NX_CLOUD_ACCESS_TOKEN
             CMD="$CMD --no-cloud"
           fi
 
@@ -769,12 +783,16 @@ jobs:
             CMD="$CMD --verbose"
           fi
 
-          # v3.0.5: caller explicitly opted out of Nx Cloud → add the
-          # per-command flag. NX_NO_CLOUD alone wasn't enough — the
-          # @nx/s3-cache plugin's post-task hook still pinged cloud
-          # API and failed with "Invalid credentials" against empty
-          # NX_CLOUD_ACCESS_TOKEN.
+          # v3.0.6: when nx_cloud_enabled is false, fully disable any
+          # cloud interaction:
+          #   - unset NX_CLOUD_ACCESS_TOKEN entirely (an empty env var
+          #     still satisfies Nx's `if (env.X !== undefined)` checks
+          #     and triggers Powerpack-license probes in plugins like
+          #     @nx/s3-cache)
+          #   - append `--no-cloud` to the nx invocation so the CLI
+          #     also opts out at the command level (belt + suspenders)
           if [ "${{ inputs.nx_cloud_enabled }}" == "false" ]; then
+            unset NX_CLOUD_ACCESS_TOKEN
             CMD="$CMD --no-cloud"
           fi
 
@@ -808,12 +826,16 @@ jobs:
             CMD="$CMD --verbose"
           fi
 
-          # v3.0.5: caller explicitly opted out of Nx Cloud → add the
-          # per-command flag. NX_NO_CLOUD alone wasn't enough — the
-          # @nx/s3-cache plugin's post-task hook still pinged cloud
-          # API and failed with "Invalid credentials" against empty
-          # NX_CLOUD_ACCESS_TOKEN.
+          # v3.0.6: when nx_cloud_enabled is false, fully disable any
+          # cloud interaction:
+          #   - unset NX_CLOUD_ACCESS_TOKEN entirely (an empty env var
+          #     still satisfies Nx's `if (env.X !== undefined)` checks
+          #     and triggers Powerpack-license probes in plugins like
+          #     @nx/s3-cache)
+          #   - append `--no-cloud` to the nx invocation so the CLI
+          #     also opts out at the command level (belt + suspenders)
           if [ "${{ inputs.nx_cloud_enabled }}" == "false" ]; then
+            unset NX_CLOUD_ACCESS_TOKEN
             CMD="$CMD --no-cloud"
           fi
 
