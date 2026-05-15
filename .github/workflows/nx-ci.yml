@@ -280,6 +280,40 @@ on:
         default: false
 
       # ─────────────────────────────────────────────────────────────────────────
+      # Container Runner (v3 addition)
+      # ─────────────────────────────────────────────────────────────────────────
+      container_image:
+        description: |
+          OCI image to run the job in via `jobs.<id>.container.image`. When
+          set, all steps execute inside this image; the environment-setup
+          composite automatically skips its install steps (the image is
+          expected to bake the runtimes + tools). Pass an explicit empty
+          string (the default) to keep the legacy host-runner behavior.
+
+          The image's GHCR credentials are pulled with the workflow's
+          GITHUB_TOKEN — for public images that's a no-op, for private
+          images the consuming repo needs `packages: read` on the workflow.
+
+          Callers that need postgres/mysql/redis/nats must supply them as
+          GitHub Actions `services:` containers (the composite cannot start
+          DB servers inside a containerized job). For workflows already
+          using `services:` (sql-integration-matrix, cluster-matrix), this
+          input is a drop-in win.
+        required: false
+        type: string
+        default: ""
+
+      container_options:
+        description: |
+          String passed to `jobs.<id>.container.options`. Most common use:
+          `--volume /var/run/docker.sock:/var/run/docker.sock` so that
+          testcontainers / `docker buildx` inside the job hit the host
+          daemon. Other useful flags: `--user`, `--cpus`, `--memory`.
+        required: false
+        type: string
+        default: ""
+
+      # ─────────────────────────────────────────────────────────────────────────
       # GitHub App Authentication
       # ─────────────────────────────────────────────────────────────────────────
       github_app_id:
@@ -349,6 +383,20 @@ jobs:
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: ${{ inputs.timeout_minutes }}
 
+    # v3: optional container runner. An empty `image` is treated by the
+    # GitHub Actions runner as "no container — run on the host", so leaving
+    # `container_image` empty preserves the legacy v2 behavior bit-for-bit.
+    # When the input is set, every step below executes inside the image.
+    container:
+      image: ${{ inputs.container_image }}
+      options: ${{ inputs.container_options }}
+      # github.token is auto-available in every job (including reusables);
+      # registry pulls of private GHCR images succeed as long as the caller
+      # workflow grants `packages: read`.
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+
     outputs:
       lint_result: ${{ steps.lint.outcome }}
       test_result: ${{ steps.test.outcome }}
@@ -390,6 +438,20 @@ jobs:
           github_app_private_key: ${{ secrets.github_app_private_key }}
           skip: ${{ inputs.environment_skip }}
           only: ${{ inputs.environment_only }}
+          # v3: when container_image is set, the composite skips every
+          # install step (runtimes + apt + service binaries are already
+          # in the image) while keeping schema validation, env-var
+          # validation, Rust cache, Rust build knobs, and the summary.
+          container_image: ${{ inputs.container_image }}
+
+      # When container_image is set, the composite skips setup-node →
+      # `pnpm install` never runs. Cover that path explicitly here so the
+      # nx commands below see a populated node_modules. Idempotent on
+      # host mode (composite already installed; this re-checks).
+      - name: Install workspace dependencies (container mode)
+        if: inputs.container_image != ''
+        shell: bash
+        run: pnpm install --frozen-lockfile
 
       # ════════════════════════════════════════════════════════════════════════
       # ☁️ NX CLOUD DISTRIBUTION (OPTIONAL)

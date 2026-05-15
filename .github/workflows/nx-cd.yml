@@ -252,6 +252,32 @@ on:
         default: 30
 
       # ─────────────────────────────────────────────────────────────────────────
+      # Container Runner (v3 addition)
+      # ─────────────────────────────────────────────────────────────────────────
+      container_image:
+        description: |
+          OCI image to run the release job in via `jobs.<id>.container.image`.
+          See nx-ci.yml's container_image input for full semantics. When set,
+          the environment-setup composite skips its install steps; the
+          downstream nx release / publish flow runs inside the image.
+
+          NOTE: nx-cd.yml's publish path may invoke `cargo publish` / Docker
+          buildx / cosign — all of which work inside the build-env image
+          when /var/run/docker.sock is mounted (via container_options).
+        required: false
+        type: string
+        default: ""
+
+      container_options:
+        description: |
+          String passed to `jobs.<id>.container.options`. Typically:
+          `--volume /var/run/docker.sock:/var/run/docker.sock`
+          for any project whose `publish` target builds OCI artifacts.
+        required: false
+        type: string
+        default: ""
+
+      # ─────────────────────────────────────────────────────────────────────────
       # GitHub App Authentication
       # ─────────────────────────────────────────────────────────────────────────
       github_app_id:
@@ -304,6 +330,14 @@ jobs:
     name: Version, Changelog, Publish
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: ${{ inputs.timeout_minutes }}
+
+    # v3: optional container runner. Empty image = host-runner (legacy).
+    container:
+      image: ${{ inputs.container_image }}
+      options: ${{ inputs.container_options }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
 
     outputs:
       released: ${{ steps.release.outputs.released }}
@@ -370,9 +404,17 @@ jobs:
           github_token: ${{ steps.token.outputs.token }}
           skip: ${{ inputs.environment_skip }}
           only: ${{ inputs.environment_only }}
+          container_image: ${{ inputs.container_image }}
         env:
           DOCKER_USERNAME: ${{ secrets.docker_username || github.actor }}
           DOCKER_PASSWORD: ${{ secrets.docker_password || github.token }}
+
+      # Container mode skips setup-node — install workspace deps explicitly
+      # so the downstream `nx release` invocation sees node_modules.
+      - name: Install workspace dependencies (container mode)
+        if: inputs.container_image != ''
+        shell: bash
+        run: pnpm install --frozen-lockfile
 
       # ════════════════════════════════════════════════════════════════════════
       # 🔧 GIT CONFIGURATION
