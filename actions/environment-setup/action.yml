@@ -71,6 +71,42 @@ inputs:
       Example: "node" or "node,terraform"
     default: ""
 
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Container Mode (v3 addition)
+  # ─────────────────────────────────────────────────────────────────────────────
+  container_image:
+    description: |
+      When the calling workflow runs its job inside a pre-built OCI image
+      (via `jobs.<id>.container.image`) that already contains the language
+      runtimes, system packages, and service binaries, set this input to
+      the same image reference. The composite then skips every install /
+      apt / fetch step (they would be redundant) while keeping the
+      lightweight bits: schema validation, env-var validation, Rust cache,
+      Rust build knobs, and the summary.
+
+      Steps that REMAIN active in container mode:
+        - Schema validation (check-jsonschema)
+        - CI env-var validation (cargo-critical)
+        - Rust diagnostics (read-only)
+        - Cache cargo registry + target (Swatinem/rust-cache)
+        - Setup sccache (binary not baked; action wires env)
+        - Apply Rust build knobs (CARGO_BUILD_JOBS, linker)
+        - Environment Summary
+
+      Steps SKIPPED in container mode (image already provides them):
+        - Free disk space (irrelevant inside a custom image)
+        - Setup Node.js / Python / Go / Terraform / Docker
+        - apt installs: system_packages, C toolchain, redis, nats
+        - postgres + mysql install+start (callers should use
+          `services:` containers — postgres/mysql server cannot start
+          without systemd in most container images)
+        - cargo-llvm-cov install (image bakes it)
+
+      Caller responsibility: ensure the image actually contains everything
+      the workflow needs. The composite trusts the contract.
+    required: false
+    default: ""
+
 # Forward the per-component setup flags from the internal "Parse configuration"
 # step to consumers of this composite action. Needed so downstream jobs can
 # assert on what got set up (self-test workflow, diagnostic summaries, etc.).
@@ -201,7 +237,10 @@ runs:
     # opt-in (the cleanup takes ~30–60s and isn't needed for small workloads).
 
     - name: Free disk space
-      if: steps.config.outputs.free_disk_space == 'true' && runner.os == 'Linux'
+      # Skip in container mode — purging the host runner's pre-installs
+      # from inside a container is impossible (different filesystem layer)
+      # and unnecessary (the custom image already controls what's present).
+      if: steps.config.outputs.free_disk_space == 'true' && runner.os == 'Linux' && inputs.container_image == ''
       uses: jlumbroso/free-disk-space@v1.3.1
       with:
         tool-cache: false       # keep actions/cache, Node, Python, Go pre-installs
@@ -254,7 +293,9 @@ runs:
     # ══════════════════════════════════════════════════════════════════════════
 
     - name: Setup Node.js
-      if: steps.config.outputs.setup_node == 'true'
+      # Container mode: image bakes Node + pnpm via the Containerfile's
+      # nodesource install + corepack prepare. Skip the sub-action.
+      if: steps.config.outputs.setup_node == 'true' && inputs.container_image == ''
       uses: tsok-org/.github/actions/setup-node@main
       with:
         node_version: ${{ steps.config.outputs.node_version_explicit }}
@@ -268,13 +309,13 @@ runs:
     # ══════════════════════════════════════════════════════════════════════════
 
     - name: Setup Python
-      if: steps.config.outputs.setup_python == 'true'
+      if: steps.config.outputs.setup_python == 'true' && inputs.container_image == ''
       uses: actions/setup-python@v5
       with:
         python-version: ${{ steps.config.outputs.python_version }}
 
     - name: Install Poetry
-      if: steps.config.outputs.setup_python == 'true' && steps.config.outputs.python_package_manager == 'poetry'
+      if: steps.config.outputs.setup_python == 'true' && steps.config.outputs.python_package_manager == 'poetry' && inputs.container_image == ''
       shell: bash
       run: |
         echo "📦 Installing Poetry..."
@@ -282,7 +323,7 @@ runs:
         echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
     - name: Install uv
-      if: steps.config.outputs.setup_python == 'true' && steps.config.outputs.python_package_manager == 'uv'
+      if: steps.config.outputs.setup_python == 'true' && steps.config.outputs.python_package_manager == 'uv' && inputs.container_image == ''
       shell: bash
       run: |
         echo "📦 Installing uv..."
@@ -294,7 +335,7 @@ runs:
     # ══════════════════════════════════════════════════════════════════════════
 
     - name: Setup Go
-      if: steps.config.outputs.setup_go == 'true'
+      if: steps.config.outputs.setup_go == 'true' && inputs.container_image == ''
       uses: actions/setup-go@v5
       with:
         go-version: ${{ steps.config.outputs.go_version }}
@@ -306,7 +347,7 @@ runs:
     # ══════════════════════════════════════════════════════════════════════════
 
     - name: Setup Terraform
-      if: steps.config.outputs.setup_terraform == 'true'
+      if: steps.config.outputs.setup_terraform == 'true' && inputs.container_image == ''
       uses: tsok-org/.github/actions/setup-terraform@main
       with:
         terraform_version: ${{ steps.config.outputs.terraform_version }}
@@ -322,7 +363,8 @@ runs:
     # Runs before Docker setup so downstream build steps see the headers.
 
     - name: Install system packages (apt)
-      if: steps.config.outputs.setup_system_packages == 'true' && runner.os == 'Linux'
+      # Container mode: image already has the required apt packages baked in.
+      if: steps.config.outputs.setup_system_packages == 'true' && runner.os == 'Linux' && inputs.container_image == ''
       shell: bash
       run: |
         echo "📦 Installing apt packages: ${{ steps.config.outputs.system_packages }}"
@@ -342,7 +384,7 @@ runs:
     # extra packages. Additive to `system_packages`. Linux-only.
 
     - name: Setup C toolchain
-      if: steps.config.outputs.setup_c == 'true' && runner.os == 'Linux'
+      if: steps.config.outputs.setup_c == 'true' && runner.os == 'Linux' && inputs.container_image == ''
       shell: bash
       env:
         TOOLCHAIN_PACKAGES: ${{ steps.config.outputs.c_packages }}
@@ -425,7 +467,8 @@ runs:
         shared-key: "rust-workspace"
 
     - name: Install cargo-llvm-cov (for Rust coverage)
-      if: steps.config.outputs.setup_rust == 'true' && steps.config.outputs.rust_coverage == 'true' && runner.os == 'Linux'
+      # Container mode: image bakes cargo-llvm-cov via cargo-binstall.
+      if: steps.config.outputs.setup_rust == 'true' && steps.config.outputs.rust_coverage == 'true' && runner.os == 'Linux' && inputs.container_image == ''
       # taiki-e/install-action downloads pre-built binaries — no compile cost.
       # cargo-llvm-cov generates lcov.info via LLVM profiling instrumentation;
       # requires the `llvm-tools-preview` rustup component (callers should
@@ -506,7 +549,10 @@ runs:
     # DOCKER_USERNAME, DOCKER_PASSWORD in the calling workflow's env.
 
     - name: Setup Docker
-      if: steps.config.outputs.setup_docker == 'true'
+      # Container mode: image has docker CLI + buildx-plugin; caller mounts
+      # /var/run/docker.sock into the job container so the daemon stays on
+      # the host. No need for setup-docker to re-install anything.
+      if: steps.config.outputs.setup_docker == 'true' && inputs.container_image == ''
       uses: tsok-org/.github/actions/setup-docker@main
       with:
         registry: ${{ steps.config.outputs.docker_registry || env.DOCKER_REGISTRY }}
@@ -525,7 +571,8 @@ runs:
     # Tests own server lifecycle — we don't auto-start anything here.
 
     - name: Install redis-server
-      if: steps.config.outputs.service_redis == 'true' && runner.os == 'Linux'
+      # Container mode: image bakes redis-server.
+      if: steps.config.outputs.service_redis == 'true' && runner.os == 'Linux' && inputs.container_image == ''
       shell: bash
       run: |
         echo "🧰 Installing redis-server via apt"
@@ -537,7 +584,8 @@ runs:
         redis-server --version
 
     - name: Install nats-server
-      if: steps.config.outputs.service_nats == 'true' && runner.os == 'Linux'
+      # Container mode: image bakes nats-server.
+      if: steps.config.outputs.service_nats == 'true' && runner.os == 'Linux' && inputs.container_image == ''
       shell: bash
       run: |
         # nats-server isn't in apt; fetch the latest stable release binary.
@@ -564,7 +612,11 @@ runs:
         nats-server --version
 
     - name: Install + start PostgreSQL
-      if: steps.config.outputs.service_postgres == 'true' && runner.os == 'Linux'
+      # Container mode: callers needing postgres must use GitHub Actions
+      # `services:` containers (the postgres server cannot be started with
+      # `service postgresql start` inside a container without systemd).
+      # The build-env image deliberately bakes only the postgres CLIENT.
+      if: steps.config.outputs.service_postgres == 'true' && runner.os == 'Linux' && inputs.container_image == ''
       shell: bash
       run: |
         set -euo pipefail
@@ -585,7 +637,9 @@ runs:
         psql --version
 
     - name: Install + start MySQL
-      if: steps.config.outputs.service_mysql == 'true' && runner.os == 'Linux'
+      # Container mode: same constraint as postgres — use `services:`
+      # containers; image carries the client only.
+      if: steps.config.outputs.service_mysql == 'true' && runner.os == 'Linux' && inputs.container_image == ''
       shell: bash
       run: |
         set -euo pipefail
