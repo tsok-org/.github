@@ -485,6 +485,16 @@ runs:
       with:
         tool: cargo-llvm-cov
 
+    - name: Install cargo-nextest (for `cargo nextest run`)
+      # Container mode: build-env image is expected to bake nextest.
+      # Host mode: install it on the runner so projects whose `test`
+      # targets invoke `cargo nextest run` (1.4-3.4x faster than
+      # `cargo test`) don't error with "no such command: nextest".
+      if: steps.config.outputs.setup_rust == 'true' && runner.os == 'Linux' && inputs.container_image == ''
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-nextest
+
     - name: Setup sccache (compiler cache, GitHub Actions backend)
       if: steps.config.outputs.setup_rust == 'true' && steps.config.outputs.rust_sccache == 'true'
       # mozilla-actions/sccache-action installs the sccache binary and sets
