@@ -593,15 +593,15 @@ jobs:
             ARGS="$ARGS --verbose"
           fi
 
-          # Disable Nx Cloud when no token is configured. Mirrors the
-          # nx-ci.yml v3.0.6 pattern: an empty NX_CLOUD_ACCESS_TOKEN is
-          # still "set" from Nx's perspective and triggers auth probes
-          # that fail with "Invalid credentials." Unsetting the env +
-          # appending --no-cloud is the belt-and-suspenders disable.
-          # If a token is passed, leave both alone so cloud caching works.
+          # Disable Nx Cloud when no token is configured. `nx release`
+          # doesn't accept the `--no-cloud` CLI flag (that's run-many /
+          # affected only), so we disable via env: unset the empty
+          # NX_CLOUD_ACCESS_TOKEN (which would otherwise satisfy Nx's
+          # "is set" check and trigger auth probes that fail with
+          # "Invalid credentials") and export NX_NO_CLOUD=true.
           if [ -z "$NX_CLOUD_ACCESS_TOKEN" ]; then
             unset NX_CLOUD_ACCESS_TOKEN
-            ARGS="$ARGS --no-cloud"
+            export NX_NO_CLOUD=true
             echo "📡 Nx Cloud: disabled (no token)"
           fi
 
