@@ -335,6 +335,23 @@ on:
         description: "GitHub App private key (optional)"
         required: false
 
+      # Self-hosted Nx cache plumbing (@nx/s3-cache + free `nx register`
+      # activation key). Declared explicitly so cross-org `secrets:
+      # inherit` callers can still surface them — org-level secrets do
+      # NOT cross organization boundaries via inherit, but declared
+      # workflow_call.secrets DO propagate when callers pass them.
+      nx_key:
+        description: "Nx self-hosted cache activation key (free via `nx register`)"
+        required: false
+
+      aws_access_key_id:
+        description: "AWS_ACCESS_KEY_ID for @nx/s3-cache bucket access"
+        required: false
+
+      aws_secret_access_key:
+        description: "AWS_SECRET_ACCESS_KEY for @nx/s3-cache bucket access"
+        required: false
+
     outputs:
       lint_result:
         description: "Result of lint task (success/failure/skipped)"
@@ -361,9 +378,9 @@ env:
   #     plugin uses against the S3 endpoint declared in nx.json.
   # Without these, the plugin prints "No self-hosted cache key found.
   # S3 cache will not be used" and silently falls back to local cache.
-  NX_KEY: ${{ secrets.NX_KEY }}
-  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  NX_KEY: ${{ secrets.nx_key }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.aws_access_key_id }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.aws_secret_access_key }}
   # NX_CLOUD_ACCESS_TOKEN is intentionally NOT declared at workflow
   # level. Declaring it here evaluates `secrets.nx_cloud_access_token`
   # to "" when the secret isn't set, and an empty-but-present env var
