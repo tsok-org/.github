@@ -68,9 +68,14 @@ yq_get() {
 # No config file: emit minimal defaults and exit.
 # ------------------------------------------------------------------------------
 if [[ ! -f "$CONFIG_FILE" ]]; then
-    echo "⚠️ No $CONFIG_FILE found, using minimal defaults"
+    echo "⚠️ No $CONFIG_FILE found, using inferred defaults from workspace contents"
     out "has_config=false"
 
+    # Auto-detect language toolchains from workspace markers. Workspaces
+    # that have moved to "the image is the contract" delete .environment.yml
+    # entirely; on host-mode CI we still need the host runner to have the
+    # right binaries (Rust, nats-server, redis-server, …). Infer from the
+    # files that already exist in the repo.
     if should_setup "node" && [[ -f "package.json" ]]; then
         out "setup_node=true"
         out "node_version=.node-version"
@@ -81,15 +86,35 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
         out "setup_node=false"
     fi
 
+    # Rust toolchain: enabled when Cargo.toml exists. Mirrors the
+    # explicit .environment.yml `rust: true` opt-in.
+    if should_setup "rust" && [[ -f "Cargo.toml" ]]; then
+        out "setup_rust=true"
+        out "rust_cache=true"
+        out "rust_diagnostics=false"
+        out "rust_jobs="
+        out "rust_linker="
+        out "rust_coverage=true"
+        out "rust_sccache=false"
+
+        # When Rust is present, also assume the common service binaries
+        # are needed (the SDK pattern is to spawn nats-server / redis-server
+        # via Command::new in unit tests). These are gated separately at
+        # step level (Linux + host mode), so it's safe to default-on.
+        out "service_redis=true"
+        out "service_nats=true"
+    else
+        out "setup_rust=false"
+        out "service_redis=false"
+        out "service_nats=false"
+    fi
+
     out "setup_python=false"
     out "setup_terraform=false"
     out "setup_docker=false"
     out "setup_system_packages=false"
-    out "setup_rust=false"
     out "setup_go=false"
     out "setup_c=false"
-    out "service_redis=false"
-    out "service_nats=false"
     out "service_postgres=false"
     out "service_mysql=false"
     exit 0
