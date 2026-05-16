@@ -107,6 +107,11 @@ on:
         type: boolean
         default: false
 
+env:
+  # Opt every JS action onto Node 24 instead of the runner's default
+  # Node 20. See nx-ci.yml for the rationale.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   validate-pr:
     name: Validate PR
