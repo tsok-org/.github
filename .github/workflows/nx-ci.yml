@@ -353,18 +353,24 @@ on:
         value: ${{ jobs.ci.outputs.affected_projects }}
 
 env:
-  # When the caller passes nx_cloud_access_token, use it. Otherwise leave
-  # the env var as an empty string. (The earlier v3.0.5 attempt to use a
-  # "DISABLED" placeholder made things worse — @nx/s3-cache and similar
-  # self-hosted-cache plugins parse the placeholder as a real CI token
-  # and reject it loudly at task-end.) The per-step "unset
-  # NX_CLOUD_ACCESS_TOKEN when empty" line below + the `--no-cloud` flag
-  # is what actually disables cloud authentication.
-  #
-  # Note: as of Nx 21+ the self-hosted cache plugins (@nx/s3-cache, gcs,
-  # azure, shared-fs) are free — no paid Powerpack license required.
-  # Only the S3/bucket creds need to flow through `secrets: inherit`.
-  NX_CLOUD_ACCESS_TOKEN: ${{ secrets.nx_cloud_access_token }}
+  # Self-hosted cache plumbing (@nx/s3-cache). As of Nx 21+ the plugin is
+  # FREE — no paid Powerpack license required. It needs three env vars:
+  #   • NX_KEY: free activation key obtained via `nx register` once per
+  #     workspace and stored as an org/repo secret.
+  #   • AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY: bucket creds the
+  #     plugin uses against the S3 endpoint declared in nx.json.
+  # Without these, the plugin prints "No self-hosted cache key found.
+  # S3 cache will not be used" and silently falls back to local cache.
+  NX_KEY: ${{ secrets.NX_KEY }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  # NX_CLOUD_ACCESS_TOKEN is intentionally NOT declared at workflow
+  # level. Declaring it here evaluates `secrets.nx_cloud_access_token`
+  # to "" when the secret isn't set, and an empty-but-present env var
+  # still satisfies Nx's "is set" check — triggering a SaaS auth probe
+  # that fails with "Invalid credentials" even though the caller never
+  # asked to use Nx Cloud. Steps that need it surface it conditionally
+  # via _NX_CLOUD_TOKEN_RAW (see the run-nx steps below).
   NX_NO_CLOUD: ${{ inputs.nx_cloud_enabled == false && 'true' || '' }}
   # Verbose diagnostic env. IMPORTANT: empty-string values are still "set"
   # from the child-process perspective, and cargo strictly validates these
