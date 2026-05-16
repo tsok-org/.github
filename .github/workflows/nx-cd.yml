@@ -200,6 +200,17 @@ on:
         type: boolean
         default: false
 
+      skip_publish:
+        description: |
+          Skip the `nx release publish` phase. Use this when the workspace
+          ships artifacts via a separate workflow (GitHub Releases binaries,
+          OCI images, etc.) and doesn't push packages to crates.io / npm.
+          Versioning, changelog, tagging, and the GitHub release itself
+          still happen — only the cargo/npm publish step is skipped.
+        required: false
+        type: boolean
+        default: false
+
       verbose:
         description: "Enable verbose output from nx release"
         required: false
@@ -620,6 +631,14 @@ jobs:
           # Dry run mode
           if [ "${{ inputs.dry_run }}" == "true" ]; then
             ARGS="$ARGS --dry-run"
+          fi
+
+          # Skip publish phase (workspaces that ship artifacts via a
+          # separate workflow — GitHub Releases binaries, OCI images,
+          # etc. — and don't push packages to crates.io / npm).
+          if [ "${{ inputs.skip_publish }}" == "true" ]; then
+            ARGS="$ARGS --skip-publish"
+            echo "🚫 Skipping nx release publish phase"
           fi
 
           # Verbose output
