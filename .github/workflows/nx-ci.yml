@@ -460,13 +460,21 @@ env:
   # poison main's task outputs. Mitigate by switching PR runs to
   # read-only; only trusted refs (pushes to default/release branches,
   # scheduled runs, and workflow_dispatch on the default branch) get
-  # write access. The @nx/s3-cache plugin honors this env var.
+  # write access. The @nx/s3-cache plugin honors this env var: any
+  # non-empty value other than the literal "read-only" enables
+  # read+write; "read-only" disables writes only.
+  #
+  # Trusted refs use the literal "read-write" rather than empty —
+  # the previous `&& '' || 'read-only'` form always resolves to
+  # 'read-only' in GH expressions because `'' || x` returns x. We
+  # use a non-empty truthy value here so the conditional behaves
+  # like an if/else.
   #
   # https://nx.dev/blog/cve-2025-36852-critical-cache-poisoning-vulnerability-creep
   NX_POWERPACK_CACHE_MODE: >-
     ${{
       (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-        && ''
+        && 'read-write'
         || 'read-only'
     }}
   # NX_CLOUD_ACCESS_TOKEN is intentionally NOT declared at workflow
