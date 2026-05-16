@@ -98,6 +98,74 @@ on:
         default: "."
 
       # ─────────────────────────────────────────────────────────────────────────
+      # Single-shard mode (v4 — pairs with nx-affected-plan.yml)
+      # ─────────────────────────────────────────────────────────────────────────
+      # When `target` and `projects` are both set, the workflow runs a
+      # SINGLE nx target on the supplied project list (skipping affected
+      # detection and the lint/test/build/integration/e2e/custom_tasks
+      # branching). This is the matrix-row mode: nx-affected-plan.yml
+      # computes the per-target shard list once, then the caller's
+      # matrix calls this workflow N times with `target=<...>
+      # projects=<csv>`. NX_BASE / NX_HEAD are passed through so any
+      # affected-aware tooling inside the run-many sees the same view.
+      #
+      # Backwards compatible: callers that DON'T set `target` keep the
+      # legacy multi-target behavior bit-for-bit.
+      target:
+        description: |
+          Single nx target to run (e.g. "test", "lint", "build"). When
+          set, the lint/test/build/integration/e2e/custom_tasks inputs
+          are ignored. Pair with `projects` for matrix-row execution.
+        required: false
+        type: string
+        default: ""
+
+      projects:
+        description: |
+          Comma-separated list of nx projects to run `target` on. When
+          set together with `target`, the workflow skips affected
+          detection and runs `nx run-many -t <target> -p <projects>`.
+          Pass the value emitted by nx-affected-plan.yml's matrix.
+        required: false
+        type: string
+        default: ""
+
+      nx_base:
+        description: |
+          Pre-computed NX_BASE SHA from nx-affected-plan.yml. Pass
+          through so all shards see the same view of affected. Only
+          honored when `target`+`projects` are set.
+        required: false
+        type: string
+        default: ""
+
+      nx_head:
+        description: |
+          Pre-computed NX_HEAD SHA from nx-affected-plan.yml. Pass
+          through so all shards see the same view of affected. Only
+          honored when `target`+`projects` are set.
+        required: false
+        type: string
+        default: ""
+
+      shard:
+        description: |
+          1-based shard index for this matrix row (1..shards_total).
+          Used to scope `CARGO_TARGET_DIR` so concurrent shards on the
+          same runner don't fight over the same target dir.
+        required: false
+        type: number
+        default: 0
+
+      shards_total:
+        description: |
+          Total number of shards in this matrix run. Cosmetic — used
+          for log clarity and `CARGO_TARGET_DIR` scoping.
+        required: false
+        type: number
+        default: 1
+
+      # ─────────────────────────────────────────────────────────────────────────
       # Task Configuration
       # ─────────────────────────────────────────────────────────────────────────
       lint:
@@ -493,8 +561,21 @@ jobs:
       # 🔄 NX AFFECTED DETECTION
       # ════════════════════════════════════════════════════════════════════════
 
+      # When the caller is running in single-shard mode (i.e. passed
+      # `nx_base`/`nx_head`), skip the action and use those values
+      # directly via the env. Keeps all shards in agreement on the
+      # affected view even if a new successful workflow lands mid-run.
       - name: Set Nx SHAs for affected detection
+        if: inputs.nx_base == '' || inputs.nx_head == ''
         uses: nrwl/nx-set-shas@v4
+
+      - name: Use plan-supplied NX_BASE / NX_HEAD (single-shard mode)
+        if: inputs.nx_base != '' && inputs.nx_head != ''
+        shell: bash
+        run: |
+          echo "NX_BASE=${{ inputs.nx_base }}" >> "$GITHUB_ENV"
+          echo "NX_HEAD=${{ inputs.nx_head }}" >> "$GITHUB_ENV"
+          echo "📥 Using plan-supplied NX_BASE=${{ inputs.nx_base }} NX_HEAD=${{ inputs.nx_head }}"
 
       # v3.0.3: prime git's well-known empty-tree object.
       # nrwl/nx-set-shas falls back to `4b825dc642cb6eb9a060e54bf8d69288fbee4904`
@@ -601,9 +682,32 @@ jobs:
       # 📋 GET AFFECTED PROJECTS
       # ════════════════════════════════════════════════════════════════════════
 
+      # Per-shard CARGO_TARGET_DIR so concurrent shards on the same
+      # self-hosted runner don't fight over a single target dir. Only
+      # active in single-shard mode (otherwise we keep the runner-wide
+      # persistent target dir behavior).
+      - name: Scope CARGO_TARGET_DIR per shard
+        if: inputs.target != '' && inputs.shards_total > 1
+        shell: bash
+        run: |
+          DIR="/tmp/cargo-target-${{ inputs.target }}-${{ inputs.shard }}"
+          mkdir -p "$DIR"
+          echo "CARGO_TARGET_DIR=$DIR" >> "$GITHUB_ENV"
+          echo "🦀 CARGO_TARGET_DIR=$DIR (shard ${{ inputs.shard }}/${{ inputs.shards_total }})"
+
       - name: Get affected projects
         id: affected
         run: |
+          # Single-shard mode: caller passed an explicit project list
+          # (from nx-affected-plan.yml's matrix). Use it directly.
+          if [ -n "${{ inputs.target }}" ] && [ -n "${{ inputs.projects }}" ]; then
+            AFFECTED=$(printf '%s\n' "${{ inputs.projects }}" | jq -Rcr 'split(",")')
+            echo "📥 Single-shard mode: projects=${{ inputs.projects }}"
+            echo "projects=$AFFECTED" >> "$GITHUB_OUTPUT"
+            echo "📋 Affected projects: $AFFECTED"
+            exit 0
+          fi
+
           if [ "${{ inputs.affected_only }}" == "true" ]; then
             AFFECTED=$(pnpm nx show projects --affected --json 2>/dev/null || echo "[]")
           else
@@ -618,12 +722,18 @@ jobs:
 
       - name: Run lint
         id: lint
-        if: inputs.lint
+        if: |
+          (inputs.target == '' && inputs.lint) ||
+          inputs.target == 'lint'
         run: |
           echo "🔍 Running lint..."
           CMD="pnpm nx"
 
-          if [ "${{ inputs.affected_only }}" == "true" ]; then
+          # Single-shard mode (matrix-row caller): use explicit project list.
+          # Otherwise honor the legacy affected/all toggle.
+          if [ -n "${{ inputs.target }}" ] && [ -n "${{ inputs.projects }}" ]; then
+            CMD="$CMD run-many -p ${{ inputs.projects }}"
+          elif [ "${{ inputs.affected_only }}" == "true" ]; then
             CMD="$CMD affected"
           else
             CMD="$CMD run-many"
@@ -661,12 +771,18 @@ jobs:
 
       - name: Run tests
         id: test
-        if: inputs.test
+        if: |
+          (inputs.target == '' && inputs.test) ||
+          inputs.target == 'test'
         run: |
           echo "🧪 Running tests..."
           CMD="pnpm nx"
 
-          if [ "${{ inputs.affected_only }}" == "true" ]; then
+          # Single-shard mode (matrix-row caller): use explicit project list.
+          # Otherwise honor the legacy affected/all toggle.
+          if [ -n "${{ inputs.target }}" ] && [ -n "${{ inputs.projects }}" ]; then
+            CMD="$CMD run-many -p ${{ inputs.projects }}"
+          elif [ "${{ inputs.affected_only }}" == "true" ]; then
             CMD="$CMD affected"
           else
             CMD="$CMD run-many"
@@ -709,12 +825,18 @@ jobs:
 
       - name: Run integration
         id: integration
-        if: inputs.integration
+        if: |
+          (inputs.target == '' && inputs.integration) ||
+          inputs.target == 'integration'
         run: |
           echo "🧪 Running integration..."
           CMD="pnpm nx"
 
-          if [ "${{ inputs.affected_only }}" == "true" ]; then
+          # Single-shard mode (matrix-row caller): use explicit project list.
+          # Otherwise honor the legacy affected/all toggle.
+          if [ -n "${{ inputs.target }}" ] && [ -n "${{ inputs.projects }}" ]; then
+            CMD="$CMD run-many -p ${{ inputs.projects }}"
+          elif [ "${{ inputs.affected_only }}" == "true" ]; then
             CMD="$CMD affected"
           else
             CMD="$CMD run-many"
@@ -791,12 +913,18 @@ jobs:
 
       - name: Run build
         id: build
-        if: inputs.build
+        if: |
+          (inputs.target == '' && inputs.build) ||
+          inputs.target == 'build'
         run: |
           echo "🏗️ Running build..."
           CMD="pnpm nx"
 
-          if [ "${{ inputs.affected_only }}" == "true" ]; then
+          # Single-shard mode (matrix-row caller): use explicit project list.
+          # Otherwise honor the legacy affected/all toggle.
+          if [ -n "${{ inputs.target }}" ] && [ -n "${{ inputs.projects }}" ]; then
+            CMD="$CMD run-many -p ${{ inputs.projects }}"
+          elif [ "${{ inputs.affected_only }}" == "true" ]; then
             CMD="$CMD affected"
           else
             CMD="$CMD run-many"
@@ -834,12 +962,18 @@ jobs:
 
       - name: Run e2e tests
         id: e2e
-        if: inputs.e2e
+        if: |
+          (inputs.target == '' && inputs.e2e) ||
+          inputs.target == 'e2e'
         run: |
           echo "🌐 Running e2e tests..."
           CMD="pnpm nx"
 
-          if [ "${{ inputs.affected_only }}" == "true" ]; then
+          # Single-shard mode (matrix-row caller): use explicit project list.
+          # Otherwise honor the legacy affected/all toggle.
+          if [ -n "${{ inputs.target }}" ] && [ -n "${{ inputs.projects }}" ]; then
+            CMD="$CMD run-many -p ${{ inputs.projects }}"
+          elif [ "${{ inputs.affected_only }}" == "true" ]; then
             CMD="$CMD affected"
           else
             CMD="$CMD run-many"
@@ -876,18 +1010,38 @@ jobs:
       # ════════════════════════════════════════════════════════════════════════
 
       - name: Run custom tasks
-        if: inputs.custom_tasks != ''
+        # In single-shard mode, the matrix-row caller sets `target` to
+        # the specific custom task name (e.g. "build:cdylib"); the
+        # `inputs.custom_tasks` legacy CSV is ignored. Multi-target
+        # mode keeps the original CSV-driven loop.
+        if: |
+          (inputs.target == '' && inputs.custom_tasks != '') ||
+          (inputs.target != '' &&
+           inputs.target != 'lint' &&
+           inputs.target != 'test' &&
+           inputs.target != 'build' &&
+           inputs.target != 'integration' &&
+           inputs.target != 'e2e')
         run: |
-          echo "🔧 Running custom tasks: ${{ inputs.custom_tasks }}"
-
-          # Convert comma-separated tasks to space-separated
-          TASKS=$(echo "${{ inputs.custom_tasks }}" | tr ',' ' ')
+          # In single-shard mode the caller passes the target name via
+          # `target`; iterate over just that one. Otherwise iterate the
+          # legacy CSV from `custom_tasks`.
+          if [ -n "${{ inputs.target }}" ]; then
+            TASKS="${{ inputs.target }}"
+            echo "🔧 Running custom task (single-shard): $TASKS"
+          else
+            TASKS=$(echo "${{ inputs.custom_tasks }}" | tr ',' ' ')
+            echo "🔧 Running custom tasks: ${{ inputs.custom_tasks }}"
+          fi
 
           for TASK in $TASKS; do
             echo "Running task: $TASK"
             CMD="pnpm nx"
 
-            if [ "${{ inputs.affected_only }}" == "true" ]; then
+            # Single-shard mode (matrix-row caller): use explicit project list.
+            if [ -n "${{ inputs.target }}" ] && [ -n "${{ inputs.projects }}" ]; then
+              CMD="$CMD run-many -p ${{ inputs.projects }}"
+            elif [ "${{ inputs.affected_only }}" == "true" ]; then
               CMD="$CMD affected"
             else
               CMD="$CMD run-many"
