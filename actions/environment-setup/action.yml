@@ -456,7 +456,15 @@ runs:
         echo "─────────────────────────────────"
 
     - name: Cache cargo registry + target
-      if: steps.config.outputs.setup_rust == 'true' && steps.config.outputs.rust_cache == 'true'
+      # Self-hosted runners typically have a persistent working dir that
+      # already caches target/. Swatinem/rust-cache fights that pattern
+      # (cleans ~/.cargo/bin, partial-restores target tarballs over a dir
+      # the runner already has). Gate on github-hosted only.
+      # See Swatinem/rust-cache#194 for upstream acknowledgement.
+      if: |
+        steps.config.outputs.setup_rust == 'true' &&
+        steps.config.outputs.rust_cache == 'true' &&
+        runner.environment == 'github-hosted'
       uses: Swatinem/rust-cache@v2
       with:
         # Save cache even if the job fails — a partial cache is still faster

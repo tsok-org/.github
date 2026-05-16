@@ -650,8 +650,14 @@ jobs:
         working-directory: ${{ inputs.working_directory }}
         run: pnpm install --frozen-lockfile
 
+      # Swatinem/rust-cache only on GitHub-hosted runners. Self-hosted
+      # lab-runners have a persistent host-mounted working dir that
+      # survives across runs in container mode; rust-cache would
+      # actively fight that (cleans ~/.cargo/bin, partial-restores
+      # target tarballs over a dir the runner already has). See
+      # Swatinem/rust-cache#194 for the upstream acknowledgement.
       - name: Cache cargo registry + target (container mode)
-        if: inputs.container_image != ''
+        if: inputs.container_image != '' && runner.environment == 'github-hosted'
         uses: Swatinem/rust-cache@v2
         with:
           save-if: true
