@@ -630,8 +630,17 @@ jobs:
             *)     BASE_CMD="npx nx release" ;;
           esac
 
-          # Build command arguments
-          ARGS="--yes"
+          # Build command arguments. --yes and --skip-publish are
+          # mutually exclusive in nx release: --yes auto-confirms the
+          # publish prompt, --skip-publish auto-answers no to it.
+          # Pick whichever the caller asked for; default is --yes for
+          # workflows that DO publish.
+          if [ "${{ inputs.skip_publish }}" == "true" ]; then
+            ARGS="--skip-publish"
+            echo "🚫 Skipping nx release publish phase"
+          else
+            ARGS="--yes"
+          fi
 
           # Add preid if specified (for prerelease versions)
           if [ -n "$PREID" ]; then
@@ -647,14 +656,6 @@ jobs:
           # Dry run mode
           if [ "${{ inputs.dry_run }}" == "true" ]; then
             ARGS="$ARGS --dry-run"
-          fi
-
-          # Skip publish phase (workspaces that ship artifacts via a
-          # separate workflow — GitHub Releases binaries, OCI images,
-          # etc. — and don't push packages to crates.io / npm).
-          if [ "${{ inputs.skip_publish }}" == "true" ]; then
-            ARGS="$ARGS --skip-publish"
-            echo "🚫 Skipping nx release publish phase"
           fi
 
           # Verbose output
