@@ -226,6 +226,17 @@ on:
         type: string
         default: "github-actions[bot]"
 
+      runs_on:
+        description: |
+          Runner label(s) for the migrate job. Defaults to the
+          GitHub-hosted `ubuntu-latest` for backwards compatibility.
+          Self-hosted callers should pass their own label (e.g.
+          `lab-runners`) to avoid hitting GitHub Actions minutes
+          billing.
+        required: false
+        type: string
+        default: "ubuntu-latest"
+
       # ─────────────────────────────────────────────────────────────────────────
       # Node.js Configuration
       # ─────────────────────────────────────────────────────────────────────────
@@ -461,7 +472,7 @@ env:
 jobs:
   nx-migrate:
     name: NX Workspace Migration
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     outputs:
       migration_version: ${{ steps.nx-version.outputs.latest_version }}
       current_version: ${{ steps.nx-version.outputs.current_version }}
