@@ -99,10 +99,11 @@ inputs:
 
   nextest_version:
     description: |
-      Version requirement for cargo-nextest. Honors cargo semver syntax
-      (e.g. `^0.9`, `=0.9.85`).
+      Version pin for cargo-nextest. taiki-e/install-action accepts an
+      exact version (`0.9.85`) or empty for latest — NOT cargo's semver
+      operators (no `^`, `~`, etc.). Default empty = install latest.
     required: false
-    default: "^0.9"
+    default: ""
 
 runs:
   using: composite
@@ -195,4 +196,7 @@ runs:
       if: env.INSTALL_NEXTEST_NEEDED == 'true'
       uses: taiki-e/install-action@v2
       with:
-        tool: cargo-nextest@${{ inputs.nextest_version }}
+        # taiki-e/install-action rejects semver operators (^, ~) in the
+        # tool input. Use bare `cargo-nextest` (latest) or pin to an exact
+        # version like `cargo-nextest@0.9.85` via the input.
+        tool: cargo-nextest${{ inputs.nextest_version != '' && format('@{0}', inputs.nextest_version) || '' }}
