@@ -99,6 +99,33 @@ on:
         type: number
         default: 10
 
+      # ─────────────────────────────────────────────────────────────────────────
+      # Gates (v5 addition)
+      # ─────────────────────────────────────────────────────────────────────────
+      # Evaluate boolean gates against the affected set without forcing the
+      # caller to spin up a separate "detect affected" job. Each gate is a
+      # `name=pattern` pair; the plan emits a JSON map of gate names to
+      # booleans. Consumers reference via:
+      #   `fromJSON(needs.plan.outputs.gates).has_sql == true`
+      gates:
+        description: |
+          Semicolon-separated `gate_name=pattern` pairs. Each pattern is
+          matched against the affected project set; if at least one
+          project matches, the gate's boolean is `true`. Patterns are
+          shell-glob style (`*`, `?`) — NOT regex.
+
+          Example:
+            gates: "has_sql=mcpg-plugin-backend-sql;has_cluster=mcpg-plugin-cluster-*;has_payment=mcpg-plugin-payment-*"
+
+          The plan emits a JSON map as the `gates` output, e.g.:
+            {"has_sql": true, "has_cluster": false, "has_payment": true}
+
+          Language-agnostic: gates are purely Nx project-graph queries.
+          Empty (default) skips the gate-evaluation step entirely.
+        required: false
+        type: string
+        default: ""
+
     secrets:
       # Self-hosted cache plumbing — declared so cross-org callers can pass
       # them explicitly. The plan job doesn't run heavy tasks but the
@@ -123,6 +150,14 @@ on:
       nx_head:
         description: "Head SHA computed by nrwl/nx-set-shas. Pass to every shard."
         value: ${{ jobs.plan.outputs.nx_head }}
+      gates:
+        description: |
+          JSON map of gate name → boolean evaluated against the affected
+          set. Emitted only when the `gates` input is non-empty;
+          otherwise `"{}"`. Consume via
+          `fromJSON(needs.plan.outputs.gates).has_sql`.
+        value: ${{ jobs.plan.outputs.gates }}
+
       has_shards:
         description: |
           "true" if at least one target has affected projects. Callers
@@ -160,6 +195,7 @@ jobs:
       nx_base: ${{ steps.set-shas.outputs.base }}
       nx_head: ${{ steps.set-shas.outputs.head }}
       has_shards: ${{ steps.plan.outputs.has_shards }}
+      gates: ${{ steps.gates.outputs.gates }}
 
     steps:
       - name: Checkout repository
@@ -326,5 +362,82 @@ jobs:
             echo ""
             echo '```json'
             echo "$matrix" | jq .
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ════════════════════════════════════════════════════════════════════════
+      # 🚦 EVALUATE GATES (v5 addition — opt-in)
+      # ════════════════════════════════════════════════════════════════════════
+      # For each `gate_name=pattern` pair in the `gates` input, run nx to
+      # check whether any project in the affected set matches the pattern.
+      # Emits a JSON map as the `gates` output. Skipped (emits `{}`) when
+      # the input is empty.
+      #
+      # Patterns are shell-glob style. The Nx CLI accepts these directly via
+      # `nx show projects --affected -p '<glob>' --json`. We use `nx show`
+      # rather than re-querying jq against the matrix output so the gate
+      # evaluation honors the full affected detection semantics (including
+      # implicit deps, namedInputs, etc.).
+      - name: Evaluate gates
+        id: gates
+        # Always runs (even when `inputs.gates == ''`) so the workflow-level
+        # `gates` output is consistently `{...}` JSON. The empty-input
+        # branch fast-exits with `{}` after a single output write.
+        env:
+          NX_BASE: ${{ steps.set-shas.outputs.base }}
+          NX_HEAD: ${{ steps.set-shas.outputs.head }}
+          GATES_CSV: ${{ inputs.gates }}
+          PKG_MGR: ${{ steps.pkg.outputs.manager }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GATES_CSV" ]; then
+            echo "gates={}" >> "$GITHUB_OUTPUT"
+            echo "ℹ️  No gates configured — emitting empty map."
+            exit 0
+          fi
+
+          case "$PKG_MGR" in
+            bun)   NX_CMD="bun nx" ;;
+            pnpm)  NX_CMD="pnpm nx" ;;
+            yarn)  NX_CMD="yarn nx" ;;
+            npm)   NX_CMD="npm exec nx --" ;;
+            *)     NX_CMD="npx nx" ;;
+          esac
+
+          gates_map='{}'
+          IFS=';' read -ra PAIRS <<< "$GATES_CSV"
+          for pair in "${PAIRS[@]}"; do
+            pair="$(echo "$pair" | xargs)"
+            [ -z "$pair" ] && continue
+
+            name="${pair%%=*}"
+            pattern="${pair#*=}"
+            if [ -z "$name" ] || [ -z "$pattern" ] || [ "$name" = "$pair" ]; then
+              echo "::warning::Malformed gate entry '$pair' — expected name=pattern. Skipping."
+              continue
+            fi
+
+            # Query nx with the glob pattern. Output: JSON array of
+            # matching affected project names. Non-empty array = true.
+            matches=$($NX_CMD show projects --affected --base="$NX_BASE" --head="$NX_HEAD" -p "$pattern" --json 2>/dev/null || echo '[]')
+            count=$(echo "$matches" | jq 'length')
+
+            if [ "$count" -gt 0 ]; then
+              value=true
+              echo "✅ gate $name=$pattern → true ($count affected project(s))"
+            else
+              value=false
+              echo "⬜ gate $name=$pattern → false"
+            fi
+            gates_map=$(echo "$gates_map" | jq -c --arg name "$name" --argjson v "$value" '. + {($name): $v}')
+          done
+
+          echo "gates=$gates_map" >> "$GITHUB_OUTPUT"
+          {
+            echo ""
+            echo "### 🚦 Gates"
+            echo ""
+            echo '```json'
+            echo "$gates_map" | jq .
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
