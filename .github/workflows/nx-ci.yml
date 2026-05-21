@@ -390,6 +390,101 @@ on:
         type: string
         default: ""
 
+      # ─────────────────────────────────────────────────────────────────────────
+      # Language packs (v5 addition)
+      # ─────────────────────────────────────────────────────────────────────────
+      # The workflow body is language-agnostic — it only invokes Nx. Anything
+      # language-specific (CARGO_TARGET_DIR scoping, env validation, cache
+      # gating, etc.) lives in a composite action that this workflow invokes
+      # when the corresponding pack is listed in `language_packs`. Supported
+      # packs ship in tsok-org/.github/actions/nx-<lang>-setup. Add a new
+      # language by adding a new composite — NOT by editing this workflow.
+      #
+      # Currently supported:
+      #   - rust       → actions/nx-rust-setup
+      #
+      # Always-on (no opt-in needed):
+      #   - workspace  → actions/nx-workspace-setup (pnpm/yarn/npm install).
+      #                  Mandatory in container mode because nx itself is a
+      #                  Node package, regardless of app-code language.
+      #
+      # Future:
+      #   - go, python, c — add the composite + a new `if: contains(...)`
+      #     branch alongside the existing rust step.
+      language_packs:
+        description: |
+          Comma-separated language packs to enable in CONTAINER MODE. Each
+          pack invokes the matching tsok-org composite action before the
+          nx target runs. Ignored when `container_image` is empty (host
+          mode delegates to actions/environment-setup via .environment.yml).
+
+          Supported: rust.
+          Reserved-for-future: go, python, c, java.
+
+          Example: language_packs: "rust"
+        required: false
+        type: string
+        default: ""
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Nx target configuration suffix (v5 addition)
+      # ─────────────────────────────────────────────────────────────────────────
+      # Nx supports per-target configurations: `nx run myproj:test:pg17`.
+      # Pass the suffix here (without the leading colon) and the workflow
+      # appends it to the target name when invoking nx. Mutually compatible
+      # with the existing single-shard `target` + `projects` inputs.
+      target_configuration:
+        description: |
+          Nx target configuration suffix (without leading colon). When set,
+          the nx invocation becomes `nx run-many -t <target>:<configuration>
+          -p <projects>`. Useful for parameterised test matrices (e.g.
+          per-DB-engine configurations on the SQL backend plugin).
+
+          Default empty = no configuration suffix.
+        required: false
+        type: string
+        default: ""
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Extra env vars (v5 addition)
+      # ─────────────────────────────────────────────────────────────────────────
+      # Lets callers pass arbitrary env vars without modifying the reusable
+      # workflow. JSON object of {name: value}; each entry is exported to
+      # GITHUB_ENV before the language packs run. Use for matrix-row
+      # parameterisation (e.g. POSTGRES_TEST_URL per row) or secret
+      # injection (when paired with explicit secrets).
+      extra_env_json:
+        description: |
+          JSON object of additional env vars to export to GITHUB_ENV.
+          Example:
+            extra_env_json: |
+              {"POSTGRES_TEST_URL": "postgres://u:p@postgres:5432/db",
+               "RUSTFLAGS": "-C link-arg=-fuse-ld=lld"}
+
+          Default: empty object (no extras).
+        required: false
+        type: string
+        default: "{}"
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Cache mode override (v5 addition)
+      # ─────────────────────────────────────────────────────────────────────────
+      # The workflow auto-computes NX_POWERPACK_CACHE_MODE from the trigger
+      # (CREEP CVE-2025-36852 mitigation: PR runs are read-only, trusted refs
+      # are read-write). Callers with non-standard threat models can override.
+      nx_powerpack_cache_mode:
+        description: |
+          Override the auto-computed @nx/s3-cache mode. Default empty =
+          auto: read-only for `pull_request`, read-write for push/schedule/
+          workflow_dispatch. Valid explicit values: `read-only`, `read-write`,
+          `no-cache`.
+
+          Use to force read-only on workflow_dispatch from feature branches,
+          or to disable cache entirely for forensic re-runs.
+        required: false
+        type: string
+        default: ""
+
     secrets:
       nx_cloud_access_token:
         description: "Nx Cloud access token for remote caching"
@@ -471,11 +566,17 @@ env:
   # like an if/else.
   #
   # https://nx.dev/blog/cve-2025-36852-critical-cache-poisoning-vulnerability-creep
+  # v5: callers can override via `nx_powerpack_cache_mode` input. Default
+  # behavior (empty input) preserves the v4 auto-compute logic.
   NX_POWERPACK_CACHE_MODE: >-
     ${{
-      (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-        && 'read-write'
-        || 'read-only'
+      inputs.nx_powerpack_cache_mode != ''
+        && inputs.nx_powerpack_cache_mode
+        || (
+          (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+            && 'read-write'
+            || 'read-only'
+        )
     }}
   # NX_CLOUD_ACCESS_TOKEN is intentionally NOT declared at workflow
   # level. Declaring it here evaluates `secrets.nx_cloud_access_token`
@@ -628,55 +729,53 @@ jobs:
           only: ${{ inputs.environment_only }}
           container_image: ${{ inputs.container_image }}
 
-      # ── Container mode: image bakes runtimes + tooling. Inline the few
-      # bits that the composite still does for host-mode callers (rust
-      # cache, linker flag, env-var sanity), then run pnpm install.
-      # No .environment.yml needed.
-      - name: Validate CI env vars (container mode)
-        if: inputs.container_image != ''
+      # ── Container mode (v5): export caller-provided env vars first so
+      # language packs and downstream nx commands see them. Empty
+      # `extra_env_json: "{}"` is a no-op.
+      - name: Apply extra env vars (container mode)
+        if: inputs.container_image != '' && inputs.extra_env_json != '' && inputs.extra_env_json != '{}'
         shell: bash
+        env:
+          EXTRA_ENV_JSON: ${{ inputs.extra_env_json }}
         run: |
-          # Same checks the env-setup composite runs on host: cargo hard-errors
-          # on empty CARGO_TERM_* / RUST_BACKTRACE strings. Catch caller
-          # miswiring before cargo sees it.
-          fail=0
-          check_enum() {
-            local name="$1"; shift
-            local value="${!name-__unset__}"
-            if [[ "$value" == "__unset__" ]]; then return 0; fi
-            for allowed in "$@"; do
-              if [[ "$value" == "$allowed" ]]; then return 0; fi
-            done
-            echo "::error::Invalid $name=\"$value\". Expected one of: $*"
-            fail=1
-          }
-          check_enum CARGO_TERM_VERBOSE "true" "false"
-          check_enum CARGO_TERM_COLOR "auto" "always" "never"
-          check_enum RUST_BACKTRACE "0" "1" "full"
-          if [[ "$fail" -ne 0 ]]; then
-            echo "Bad CI env vars will make cargo reject the invocation."
-            exit 1
-          fi
-          echo "✅ CI env vars valid."
+          set -euo pipefail
+          # Validate JSON shape early. jq returns non-zero on invalid input.
+          echo "$EXTRA_ENV_JSON" | jq -e 'type == "object"' >/dev/null \
+            || { echo "::error::extra_env_json must be a JSON object"; exit 1; }
+          # Iterate keys/values via jq, append name=value to $GITHUB_ENV.
+          while IFS=$'\t' read -r key value; do
+            echo "$key=$value" >> "$GITHUB_ENV"
+            echo "🌱 exported $key"
+          done < <(echo "$EXTRA_ENV_JSON" | jq -r 'to_entries[] | "\(.key)\t\(.value)"')
 
-      - name: Install workspace dependencies (container mode)
+      # ── Container mode: ALWAYS install Nx workspace deps (nx itself is
+      # a Node package, regardless of app-code language). Detects the
+      # package manager from lockfiles and runs the frozen-lockfile install.
+      - name: Workspace setup (container mode)
         if: inputs.container_image != ''
-        shell: bash
-        working-directory: ${{ inputs.working_directory }}
-        run: pnpm install --frozen-lockfile
-
-      # Swatinem/rust-cache only on GitHub-hosted runners. Self-hosted
-      # lab-runners have a persistent host-mounted working dir that
-      # survives across runs in container mode; rust-cache would
-      # actively fight that (cleans ~/.cargo/bin, partial-restores
-      # target tarballs over a dir the runner already has). See
-      # Swatinem/rust-cache#194 for the upstream acknowledgement.
-      - name: Cache cargo registry + target (container mode)
-        if: inputs.container_image != '' && runner.environment == 'github-hosted'
-        uses: Swatinem/rust-cache@v2
+        uses: tsok-org/.github/actions/nx-workspace-setup@main
         with:
-          save-if: true
-          shared-key: "rust-workspace"
+          working_directory: ${{ inputs.working_directory }}
+          frozen_lockfile: "true"
+
+      # ── Container mode: language-specific packs. Each pack is a thin
+      # composite that does its language's CI-glue extras (env validation,
+      # cache scoping, tool installs). NOT language toolchain install —
+      # that's the container image's responsibility.
+      - name: Rust language pack
+        if: inputs.container_image != '' && contains(format(',{0},', inputs.language_packs), ',rust,')
+        uses: tsok-org/.github/actions/nx-rust-setup@main
+        with:
+          target: ${{ inputs.target }}
+          shard: ${{ inputs.shard }}
+          shards_total: ${{ inputs.shards_total }}
+          container_image: ${{ inputs.container_image }}
+
+      # Add future language packs here. Each is a separate `uses:` step
+      # gated on `contains(format(',{0},', inputs.language_packs), ',<lang>,')`.
+      # Adding a pack does NOT require touching any other part of this
+      # workflow — only the composite at actions/nx-<lang>-setup/action.yml
+      # plus a step here.
 
       # NOTE: Rust linker selection is now baked per-repo via
       # `.cargo/config.toml` (callers commit their own per-target
@@ -703,18 +802,11 @@ jobs:
       # 📋 GET AFFECTED PROJECTS
       # ════════════════════════════════════════════════════════════════════════
 
-      # Per-shard CARGO_TARGET_DIR so concurrent shards on the same
-      # self-hosted runner don't fight over a single target dir. Only
-      # active in single-shard mode (otherwise we keep the runner-wide
-      # persistent target dir behavior).
-      - name: Scope CARGO_TARGET_DIR per shard
-        if: inputs.target != '' && inputs.shards_total > 1
-        shell: bash
-        run: |
-          DIR="/tmp/cargo-target-${{ inputs.target }}-${{ inputs.shard }}"
-          mkdir -p "$DIR"
-          echo "CARGO_TARGET_DIR=$DIR" >> "$GITHUB_ENV"
-          echo "🦀 CARGO_TARGET_DIR=$DIR (shard ${{ inputs.shard }}/${{ inputs.shards_total }})"
+      # NOTE: Per-shard CARGO_TARGET_DIR scoping moved to the Rust language
+      # pack composite (actions/nx-rust-setup). The composite runs in
+      # container mode only — host mode doesn't need shard scoping because
+      # the env-setup composite handles it via .environment.yml setup-rust
+      # block.
 
       - name: Get affected projects
         id: affected
@@ -760,7 +852,9 @@ jobs:
             CMD="$CMD run-many"
           fi
 
-          CMD="$CMD -t lint --parallel=${{ inputs.parallel }}"
+          # v5: append :<configuration> suffix iff target_configuration is set.
+          TARGET_SUFFIX="${{ inputs.target_configuration }}"
+          CMD="$CMD -t lint${TARGET_SUFFIX:+:$TARGET_SUFFIX} --parallel=${{ inputs.parallel }}"
 
           if [ -n "${{ inputs.exclude_projects }}" ]; then
             CMD="$CMD --exclude=${{ inputs.exclude_projects }}"
@@ -814,7 +908,9 @@ jobs:
           # `cargo llvm-cov ...` produces lcov.info as a side effect); the
           # `coverage` input on this workflow only gates whether we *upload*
           # those lcov artifacts downstream, not which target we run.
-          CMD="$CMD -t test --parallel=${{ inputs.parallel }}"
+          # v5: append :<configuration> suffix iff target_configuration is set.
+          TARGET_SUFFIX="${{ inputs.target_configuration }}"
+          CMD="$CMD -t test${TARGET_SUFFIX:+:$TARGET_SUFFIX} --parallel=${{ inputs.parallel }}"
 
           if [ -n "${{ inputs.exclude_projects }}" ]; then
             CMD="$CMD --exclude=${{ inputs.exclude_projects }}"
@@ -866,7 +962,10 @@ jobs:
           # Projects without an `integration` target are skipped by Nx,
           # so `run-many -t integration` is safe to run across every
           # project even when only a subset declares the target.
-          CMD="$CMD -t integration --parallel=${{ inputs.parallel }}"
+          # v5: append :<configuration> suffix iff target_configuration is set.
+          # This is the common case for per-DB-engine matrices (pg14/pg17 etc).
+          TARGET_SUFFIX="${{ inputs.target_configuration }}"
+          CMD="$CMD -t integration${TARGET_SUFFIX:+:$TARGET_SUFFIX} --parallel=${{ inputs.parallel }}"
 
           if [ -n "${{ inputs.exclude_projects }}" ]; then
             CMD="$CMD --exclude=${{ inputs.exclude_projects }}"
@@ -951,7 +1050,9 @@ jobs:
             CMD="$CMD run-many"
           fi
 
-          CMD="$CMD -t build --parallel=${{ inputs.parallel }}"
+          # v5: append :<configuration> suffix iff target_configuration is set.
+          TARGET_SUFFIX="${{ inputs.target_configuration }}"
+          CMD="$CMD -t build${TARGET_SUFFIX:+:$TARGET_SUFFIX} --parallel=${{ inputs.parallel }}"
 
           if [ -n "${{ inputs.exclude_projects }}" ]; then
             CMD="$CMD --exclude=${{ inputs.exclude_projects }}"
@@ -1000,7 +1101,9 @@ jobs:
             CMD="$CMD run-many"
           fi
 
-          CMD="$CMD -t e2e --parallel=${{ inputs.parallel }}"
+          # v5: append :<configuration> suffix iff target_configuration is set.
+          TARGET_SUFFIX="${{ inputs.target_configuration }}"
+          CMD="$CMD -t e2e${TARGET_SUFFIX:+:$TARGET_SUFFIX} --parallel=${{ inputs.parallel }}"
 
           if [ -n "${{ inputs.exclude_projects }}" ]; then
             CMD="$CMD --exclude=${{ inputs.exclude_projects }}"
@@ -1068,7 +1171,9 @@ jobs:
               CMD="$CMD run-many"
             fi
 
-            CMD="$CMD -t $TASK --parallel=${{ inputs.parallel }}"
+            # v5: append :<configuration> suffix iff target_configuration is set.
+            TARGET_SUFFIX="${{ inputs.target_configuration }}"
+            CMD="$CMD -t ${TASK}${TARGET_SUFFIX:+:$TARGET_SUFFIX} --parallel=${{ inputs.parallel }}"
 
             if [ -n "${{ inputs.exclude_projects }}" ]; then
               CMD="$CMD --exclude=${{ inputs.exclude_projects }}"

@@ -1,0 +1,115 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                       NX WORKSPACE SETUP COMPOSITE ACTION                    ║
+# ╠══════════════════════════════════════════════════════════════════════════════╣
+# ║  Bootstraps an Nx workspace inside a container-mode CI job. Detects the      ║
+# ║  package manager from lockfiles and runs the frozen-lockfile install.        ║
+# ║  ALWAYS needed in container mode (because nx itself is a Node package),     ║
+# ║  regardless of what languages the workspace's app code is written in.        ║
+# ║                                                                              ║
+# ║  Why this is NOT a "TypeScript pack":                                        ║
+# ║    A pure-Rust workspace using Nx (e.g. mcpg-dev/source-code with           ║
+# ║    @monodon/rust) still needs Node + pnpm to run `pnpm nx ...`. The Nx      ║
+# ║    workspace bootstrap is independent of the app code's language. This       ║
+# ║    composite is mandatory; language packs (rust, go, python, …) are         ║
+# ║    additional opt-in extras on top.                                          ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ WHAT THIS DOES                                                              │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │ 1. Detect package manager from lockfile (bun → pnpm → yarn → npm).         │
+# │ 2. Run the manager's frozen-lockfile install command.                      │
+# │                                                                             │
+# │ Does NOT install Node, pnpm, yarn, npm, or bun — those are expected to be  │
+# │ baked into the container image. For host mode, environment-setup handles    │
+# │ the install via .environment.yml. For non-container github-hosted callers   │
+# │ who want auto-install, use actions/setup-node directly instead.             │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
+name: "Nx Workspace Setup"
+description: |
+  Install the Nx workspace's Node dependencies inside a container-mode
+  CI job. Auto-detects the package manager from the lockfile and runs
+  the frozen-lockfile install. Does NOT install the manager itself —
+  the container image is expected to provide it.
+
+inputs:
+  working_directory:
+    description: |
+      Working directory for the install. Defaults to the repo root.
+      Override for nested Nx workspaces or monorepos with multiple
+      Nx instances.
+    required: false
+    default: "."
+
+  frozen_lockfile:
+    description: |
+      Whether to use the frozen-lockfile install. `true` rejects any
+      lockfile drift (the CI default); `false` allows updates.
+    required: false
+    default: "true"
+
+outputs:
+  manager:
+    description: "Detected package manager (pnpm / yarn / npm / bun)"
+    value: ${{ steps.pm.outputs.manager }}
+
+  exec:
+    description: |
+      Command prefix for invoking a Node-installed binary from
+      downstream steps. e.g. `pnpm nx` for pnpm workspaces.
+    value: ${{ steps.pm.outputs.exec }}
+
+runs:
+  using: composite
+  steps:
+    - name: Detect package manager
+      id: pm
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        set -euo pipefail
+        if [ -f bun.lockb ] || [ -f bun.lock ]; then
+          echo "manager=bun" >> "$GITHUB_OUTPUT"
+          echo "exec=bun"     >> "$GITHUB_OUTPUT"
+          echo "📦 detected: bun"
+        elif [ -f pnpm-lock.yaml ]; then
+          echo "manager=pnpm" >> "$GITHUB_OUTPUT"
+          echo "exec=pnpm"    >> "$GITHUB_OUTPUT"
+          echo "📦 detected: pnpm"
+        elif [ -f yarn.lock ]; then
+          echo "manager=yarn" >> "$GITHUB_OUTPUT"
+          echo "exec=yarn"    >> "$GITHUB_OUTPUT"
+          echo "📦 detected: yarn"
+        elif [ -f package-lock.json ]; then
+          echo "manager=npm" >> "$GITHUB_OUTPUT"
+          echo "exec=npx"    >> "$GITHUB_OUTPUT"
+          echo "📦 detected: npm"
+        else
+          echo "::warning::No lockfile found in ${{ inputs.working_directory }} — skipping install"
+          echo "manager=" >> "$GITHUB_OUTPUT"
+          echo "exec=npx"  >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Install workspace dependencies
+      if: steps.pm.outputs.manager != ''
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        set -euo pipefail
+        FROZEN_FLAG=""
+        case "${{ steps.pm.outputs.manager }}" in
+          pnpm)
+            ${{ inputs.frozen_lockfile == 'true' && 'pnpm install --frozen-lockfile --prefer-offline' || 'pnpm install --prefer-offline' }}
+            ;;
+          yarn)
+            ${{ inputs.frozen_lockfile == 'true' && 'yarn install --frozen-lockfile' || 'yarn install' }}
+            ;;
+          npm)
+            ${{ inputs.frozen_lockfile == 'true' && 'npm ci' || 'npm install' }}
+            ;;
+          bun)
+            ${{ inputs.frozen_lockfile == 'true' && 'bun install --frozen-lockfile' || 'bun install' }}
+            ;;
+        esac
+        echo "✅ workspace deps installed via ${{ steps.pm.outputs.manager }}"

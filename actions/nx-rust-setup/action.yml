@@ -1,0 +1,198 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                         NX RUST SETUP COMPOSITE ACTION                       ║
+# ╠══════════════════════════════════════════════════════════════════════════════╣
+# ║  Rust-specific container-mode runtime extras for Nx CI jobs. This action     ║
+# ║  is invoked by nx-ci.yml@v5 when `language_packs` includes 'rust'. It does   ║
+# ║  NOT install the Rust toolchain — that's the consumer container image's     ║
+# ║  responsibility (or environment-setup's job in host mode). This composite    ║
+# ║  is the Nx-CI-glue layer for Rust: env validation, per-shard target dir,    ║
+# ║  cache gating, optional cargo-nextest install.                               ║
+# ║                                                                              ║
+# ║  Why a composite (not inline in nx-ci.yml@v5):                              ║
+# ║    Keeps the reusable workflow language-agnostic. Adding Go / Python / C    ║
+# ║    packs in the future means adding new composites, NOT touching the         ║
+# ║    nx-ci.yml body. The workflow only knows about the `language_packs` CSV   ║
+# ║    and routes to the matching composite.                                    ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ WHAT THIS DOES                                                              │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │ 1. Validate cargo env enums (CARGO_TERM_VERBOSE / CARGO_TERM_COLOR /        │
+# │    RUST_BACKTRACE). Cargo hard-errors on empty/invalid strings; this        │
+# │    catches caller miswiring before cargo sees it.                           │
+# │                                                                             │
+# │ 2. Scope CARGO_TARGET_DIR per shard. Concurrent shards on a single self-    │
+# │    hosted runner would otherwise corrupt each other's target/ tree. Only    │
+# │    activates in single-shard mode (target + shards_total > 1).              │
+# │                                                                             │
+# │ 3. Cache cargo registry + target (Swatinem/rust-cache). Gated on            │
+# │    runner.environment == 'github-hosted' — self-hosted runners typically    │
+# │    have a persistent host-mounted working dir where Swatinem fights with    │
+# │    on-disk state (Swatinem/rust-cache#194).                                 │
+# │                                                                             │
+# │ 4. Install cargo-nextest (optional). Most Nx-Rust workspaces use            │
+# │    `cargo nextest run` because nextest is 1.4-3.4× faster than cargo test.  │
+# │    Skip with `install_nextest: false` if your workspace uses cargo test.    │
+# └─────────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ USAGE                                                                       │
+# ├─────────────────────────────────────────────────────────────────────────────┤
+# │ Usually invoked transitively via nx-ci.yml@v5 with `language_packs: rust`.  │
+# │ Direct usage:                                                               │
+# │                                                                             │
+# │   - uses: tsok-org/.github/actions/nx-rust-setup@v1                        │
+# │     with:                                                                   │
+# │       target: integration                                                   │
+# │       shard: ${{ matrix.shard }}                                            │
+# │       shards_total: ${{ matrix.shards_total }}                              │
+# │       container_image: ghcr.io/myorg/build-env:ci-latest                    │
+# │       install_nextest: true                                                 │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
+name: "Nx Rust Setup"
+description: |
+  Rust-specific container-mode runtime configuration for Nx CI: env
+  validation, per-shard CARGO_TARGET_DIR scoping, cache gating, and
+  optional cargo-nextest installation. Does NOT install the Rust
+  toolchain (that's the container image's job).
+
+inputs:
+  target:
+    description: |
+      Nx target being run in this job (e.g. `test`, `integration`,
+      `build:cdylib`). Used to scope CARGO_TARGET_DIR per target so
+      concurrent matrix rows on the same runner don't collide.
+    required: false
+    default: ""
+
+  shard:
+    description: |
+      1-based shard index (1..shards_total). Used together with `target`
+      to produce a unique CARGO_TARGET_DIR path per shard.
+    required: false
+    default: "0"
+
+  shards_total:
+    description: |
+      Total shard count. When > 1, CARGO_TARGET_DIR scoping activates.
+      When ≤ 1, the runner-wide target dir is preserved (faster cache
+      hits across single-shard runs).
+    required: false
+    default: "1"
+
+  container_image:
+    description: |
+      The job's container image reference, if any. Empty string = host
+      mode (skip cache step; environment-setup handles it). Non-empty =
+      container mode (enable Swatinem cache when runner is github-hosted).
+    required: false
+    default: ""
+
+  install_nextest:
+    description: |
+      Install cargo-nextest if not already on PATH. Most Nx-Rust
+      workspaces use nextest; set to false if you use plain `cargo test`.
+    required: false
+    default: "true"
+
+  nextest_version:
+    description: |
+      Version requirement for cargo-nextest. Honors cargo semver syntax
+      (e.g. `^0.9`, `=0.9.85`).
+    required: false
+    default: "^0.9"
+
+runs:
+  using: composite
+  steps:
+    # ─────────────────────────────────────────────────────────────────────────
+    # 1. Validate cargo env enums
+    # ─────────────────────────────────────────────────────────────────────────
+    # Cargo hard-errors on empty strings for CARGO_TERM_VERBOSE etc:
+    #   error in environment variable `CARGO_TERM_VERBOSE`: provided string
+    #   was not `true` or `false`
+    # Catch caller miswiring before cargo sees it. Only validates vars that
+    # are actually set (skips unset).
+    - name: Validate cargo env enums
+      shell: bash
+      run: |
+        fail=0
+        check_enum() {
+          local name="$1"; shift
+          local value="${!name-__unset__}"
+          if [[ "$value" == "__unset__" ]]; then return 0; fi
+          for allowed in "$@"; do
+            if [[ "$value" == "$allowed" ]]; then return 0; fi
+          done
+          echo "::error::Invalid $name=\"$value\". Expected one of: $*"
+          fail=1
+        }
+        check_enum CARGO_TERM_VERBOSE  "true" "false"
+        check_enum CARGO_TERM_COLOR    "auto" "always" "never"
+        check_enum RUST_BACKTRACE      "0" "1" "full"
+        if [[ "$fail" -ne 0 ]]; then
+          echo "Bad CI env vars will make cargo reject the invocation."
+          exit 1
+        fi
+        echo "✅ cargo env enums valid"
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # 2. Per-shard CARGO_TARGET_DIR scoping
+    # ─────────────────────────────────────────────────────────────────────────
+    # When multiple matrix rows run concurrently on the same self-hosted
+    # runner with shards_total > 1, they otherwise all write to the same
+    # workspace target/ — interleaved writes corrupt each other's
+    # incrementals. Scope per (target, shard) to prevent that.
+    - name: Scope CARGO_TARGET_DIR per shard
+      if: inputs.target != '' && inputs.shards_total != '1' && inputs.shards_total != '0'
+      shell: bash
+      run: |
+        DIR="/tmp/cargo-target-${{ inputs.target }}-${{ inputs.shard }}"
+        mkdir -p "$DIR"
+        echo "CARGO_TARGET_DIR=$DIR" >> "$GITHUB_ENV"
+        echo "🦀 CARGO_TARGET_DIR=$DIR (shard ${{ inputs.shard }}/${{ inputs.shards_total }})"
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # 3. Cache cargo registry + target (github-hosted only)
+    # ─────────────────────────────────────────────────────────────────────────
+    # Swatinem/rust-cache is great on ephemeral GH-hosted runners but
+    # actively harmful on self-hosted runners with persistent working dirs
+    # — it strips ~/.cargo/bin contents and partial-restores tarballs over
+    # files the runner already has on disk. See Swatinem/rust-cache#194.
+    # Gate on runner.environment to get the best of both.
+    - name: Cache cargo registry + target (github-hosted)
+      if: inputs.container_image != '' && runner.environment == 'github-hosted'
+      uses: Swatinem/rust-cache@v2
+      with:
+        save-if: true
+        shared-key: "rust-workspace"
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # 4. cargo-nextest install (if not already on PATH)
+    # ─────────────────────────────────────────────────────────────────────────
+    # Most Nx-Rust workspaces drive tests via `cargo nextest run`. The
+    # container image / host should already have it — but this step
+    # ensures the binary is on PATH if the image author forgot.
+    # `taiki-e/install-action` is a fast pre-built-binary installer.
+    - name: Install cargo-nextest (if absent)
+      if: inputs.install_nextest == 'true'
+      shell: bash
+      run: |
+        if command -v cargo-nextest >/dev/null 2>&1; then
+          echo "✅ cargo-nextest already on PATH: $(cargo nextest --version)"
+          exit 0
+        fi
+        echo "📦 cargo-nextest not found, will install via taiki-e/install-action"
+        # Set a marker so the next step actually does the install. This
+        # split lets us avoid invoking taiki-e/install-action when the
+        # tool is already present (fast-path for container images that
+        # bake it in).
+        echo "INSTALL_NEXTEST_NEEDED=true" >> "$GITHUB_ENV"
+
+    - name: cargo-nextest install via taiki-e
+      if: env.INSTALL_NEXTEST_NEEDED == 'true'
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-nextest@${{ inputs.nextest_version }}
