@@ -416,12 +416,44 @@ on:
           Comma-separated language packs to enable in CONTAINER MODE. Each
           pack invokes the matching tsok-org composite action before the
           nx target runs. Ignored when `container_image` is empty (host
-          mode delegates to actions/environment-setup via .environment.yml).
+          mode delegates to actions/environment-setup, which now auto-
+          detects toolchains from rust-toolchain.toml / package.json
+          when no .environment.yml is present).
 
           Supported: rust.
           Reserved-for-future: go, python, c, java.
 
           Example: language_packs: "rust"
+        required: false
+        type: string
+        default: ""
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # System packages (v5 addition)
+      # ─────────────────────────────────────────────────────────────────────────
+      # Apt packages to install on the host runner before the Nx target runs.
+      # Most useful in HOST MODE (container_image empty) where the runner
+      # doesn't bake the C dev libraries that Rust *-sys crates link against
+      # — e.g. libsasl2-dev for sasl2-sys, libssl-dev for openssl-sys,
+      # libcurl4-openssl-dev for curl-sys. In container mode, the container
+      # image is expected to provide these and this input is ignored.
+      #
+      # Replaces the previous pattern of declaring system_packages in a
+      # checked-in .environment.yml + relying on actions/environment-setup
+      # to apt-install them. Inputs are easier to change per-caller, version
+      # in PRs, and audit at glance — no schema indirection.
+      #
+      # Format: space- or newline-separated package names, exactly what apt
+      # install expects.
+      system_packages:
+        description: |
+          Apt packages to install on host runners (ignored in container mode).
+          Space- or newline-separated.
+
+          Example:
+            system_packages: >-
+              libsasl2-dev libssl-dev libcurl4-openssl-dev
+              libzstd-dev protobuf-compiler pkg-config lld
         required: false
         type: string
         default: ""
@@ -728,6 +760,29 @@ jobs:
           skip: ${{ inputs.environment_skip }}
           only: ${{ inputs.environment_only }}
           container_image: ${{ inputs.container_image }}
+
+      # ── Host mode: install caller-supplied system packages (v5 addition).
+      # Replaces the .environment.yml + environment-setup-driven apt
+      # install — system_packages is now an explicit nx-ci.yml input,
+      # surfacing the package set in the calling workflow's PR diff.
+      # Skipped in container mode (the image is the contract).
+      - name: Install system packages (host mode)
+        if: inputs.container_image == '' && inputs.system_packages != ''
+        shell: bash
+        env:
+          PACKAGES: ${{ inputs.system_packages }}
+        run: |
+          set -euo pipefail
+          # Normalise whitespace + newlines into space-separated tokens.
+          pkgs=$(echo "$PACKAGES" | tr '\n' ' ' | xargs)
+          if [ -z "$pkgs" ]; then
+            echo "ℹ️  system_packages input is whitespace-only; nothing to install."
+            exit 0
+          fi
+          echo "📦 Installing system packages: $pkgs"
+          sudo apt-get update -y
+          # shellcheck disable=SC2086 -- intentional word splitting
+          sudo apt-get install -y --no-install-recommends $pkgs
 
       # ── Container mode (v5): export caller-provided env vars first so
       # language packs and downstream nx commands see them. Empty
