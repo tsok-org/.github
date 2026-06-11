@@ -1,12 +1,12 @@
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║                         NX RUST SETUP COMPOSITE ACTION                       ║
 # ╠══════════════════════════════════════════════════════════════════════════════╣
-# ║  Rust-specific container-mode runtime extras for Nx CI jobs. This action     ║
-# ║  is invoked by nx-ci.yml@v5 when `language_packs` includes 'rust'. It does   ║
-# ║  NOT install the Rust toolchain — that's the consumer container image's     ║
-# ║  responsibility (or environment-setup's job in host mode). This composite    ║
+# ║  Rust-specific runtime extras for Nx CI jobs (container AND host mode).     ║
+# ║  This action is invoked by nx-ci.yml@v5 when `language_packs` includes      ║
+# ║  'rust'. It does NOT install the Rust toolchain — that's the consumer       ║
+# ║  container image's (or host runner image's) responsibility. This composite  ║
 # ║  is the Nx-CI-glue layer for Rust: env validation, per-shard target dir,    ║
-# ║  cache gating, optional cargo-nextest install.                               ║
+# ║  cache gating, optional cargo-nextest install, env-reactive sccache.        ║
 # ║                                                                              ║
 # ║  Why a composite (not inline in nx-ci.yml@v5):                              ║
 # ║    Keeps the reusable workflow language-agnostic. Adding Go / Python / C    ║
@@ -34,6 +34,11 @@
 # │ 4. Install cargo-nextest (optional). Most Nx-Rust workspaces use            │
 # │    `cargo nextest run` because nextest is 1.4-3.4× faster than cargo test.  │
 # │    Skip with `install_nextest: false` if your workspace uses cargo test.    │
+# │                                                                             │
+# │ 5. Enable sccache (env-reactive). When the job env carries                  │
+# │    SCCACHE_BUCKET (e.g. injected via nx-ci's extra_env_json), install       │
+# │    sccache if absent and export RUSTC_WRAPPER=sccache +                     │
+# │    CARGO_INCREMENTAL=0. No SCCACHE_BUCKET → zero behaviour change.          │
 # └─────────────────────────────────────────────────────────────────────────────┘
 #
 # ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -53,10 +58,11 @@
 
 name: "Nx Rust Setup"
 description: |
-  Rust-specific container-mode runtime configuration for Nx CI: env
-  validation, per-shard CARGO_TARGET_DIR scoping, cache gating, and
-  optional cargo-nextest installation. Does NOT install the Rust
-  toolchain (that's the container image's job).
+  Rust-specific runtime configuration for Nx CI (container and host
+  mode): env validation, per-shard CARGO_TARGET_DIR scoping, cache
+  gating, optional cargo-nextest installation, and env-reactive sccache
+  enablement (when SCCACHE_BUCKET is present in the job env). Does NOT
+  install the Rust toolchain (that's the container/runner image's job).
 
 inputs:
   target:
@@ -200,3 +206,56 @@ runs:
         # tool input. Use bare `cargo-nextest` (latest) or pin to an exact
         # version like `cargo-nextest@0.9.85` via the input.
         tool: cargo-nextest${{ inputs.nextest_version != '' && format('@{0}', inputs.nextest_version) || '' }}
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # 5. sccache (env-reactive: keyed on SCCACHE_BUCKET)
+    # ─────────────────────────────────────────────────────────────────────────
+    # Compilation caching shared across ephemeral runners via an S3-compatible
+    # bucket. Deliberately NOT an action input: the trigger is the presence of
+    # SCCACHE_BUCKET in the job env (callers inject it plus SCCACHE_ENDPOINT /
+    # SCCACHE_REGION / credentials via nx-ci's extra_env_json or plain job
+    # env). That keeps the cache backend config, including its secrets, in
+    # ONE place caller-side instead of mirroring every sccache knob as a
+    # composite input. No SCCACHE_BUCKET → these steps are skipped and
+    # nothing changes.
+    #
+    # CARGO_INCREMENTAL=0 is mandatory, not an optimisation preference:
+    # rustc invocations with incremental compilation enabled are
+    # uncacheable for sccache (it refuses them), so leaving incremental on
+    # would silently produce ~0% hit rates. Ephemeral runners get no value
+    # from incremental state anyway — the target dir dies with the pod.
+    - name: Enable sccache (SCCACHE_BUCKET is set)
+      if: env.SCCACHE_BUCKET != ''
+      shell: bash
+      run: |
+        {
+          echo "RUSTC_WRAPPER=sccache"
+          echo "CARGO_INCREMENTAL=0"
+        } >> "$GITHUB_ENV"
+        echo "🗄️  sccache enabled: bucket=$SCCACHE_BUCKET endpoint=${SCCACHE_ENDPOINT:-<aws-default>} prefix=${SCCACHE_S3_KEY_PREFIX:-<none>}"
+        if command -v sccache >/dev/null 2>&1; then
+          echo "✅ sccache already on PATH: $(sccache --version)"
+        else
+          echo "📦 sccache not found, will install via taiki-e/install-action"
+          echo "INSTALL_SCCACHE_NEEDED=true" >> "$GITHUB_ENV"
+        fi
+
+    - name: sccache install via taiki-e
+      if: env.INSTALL_SCCACHE_NEEDED == 'true'
+      uses: taiki-e/install-action@v2
+      with:
+        tool: sccache
+
+    # Surface whether the cache backend is actually reachable while the job
+    # is still in its setup phase — a misconfigured endpoint/credential
+    # otherwise shows up as a wall of rustc "failed to execute compiler"
+    # errors deep inside the nx run. --show-stats forces the server to
+    # start and authenticate against the bucket.
+    - name: sccache backend probe
+      if: env.SCCACHE_BUCKET != ''
+      shell: bash
+      run: |
+        if ! sccache --show-stats; then
+          echo "::error::sccache server failed to start against bucket '$SCCACHE_BUCKET'. Check SCCACHE_ENDPOINT / credentials (AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY or SCCACHE_* equivalents)."
+          exit 1
+        fi

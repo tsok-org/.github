@@ -147,6 +147,52 @@ on:
         type: string
         default: ""
 
+      # ─────────────────────────────────────────────────────────────────────────
+      # Weighted sharding (v5.2 addition)
+      # ─────────────────────────────────────────────────────────────────────────
+      weights_file:
+        description: |
+          Workspace-relative path to a JSON map of historical task
+          durations, `{"<project>:<target>": <seconds>, ...}`. When set
+          AND the file exists, shard distribution switches from
+          count-balanced alphabetical chunks to LPT greedy bin-packing
+          (heaviest first onto the lightest shard) — so one slow project
+          (e.g. a 15-minute integration suite) doesn't ride alone with
+          two dozen fast ones while another shard finishes in 2 minutes.
+
+          Projects absent from the map weigh `default_weight`. Missing /
+          unreadable file falls back to the alphabetical behaviour, so
+          the input is always safe to set.
+        required: false
+        type: string
+        default: ""
+
+      default_weight:
+        description: |
+          Weight (seconds) assumed for projects missing from
+          weights_file. Keep it roughly the workspace's median task
+          duration so unknown projects neither dominate nor vanish.
+        required: false
+        type: number
+        default: 30
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Task splitting (v5.2 addition)
+      # ─────────────────────────────────────────────────────────────────────────
+      split_tasks:
+        description: |
+          Semicolon-separated `<project>:<target>=<parts>` entries. Each
+          named task is REMOVED from its target's shard pool and emitted
+          as <parts> dedicated matrix rows, each carrying
+          `configuration: p<K>of<N>` — the caller's nx project must
+          define those configurations (e.g. cargo-nextest
+          `--partition hash:K/N`). Pair with nx-ci.yml's `configuration`
+          input. Use for single tasks too big for any shard
+          (`split_tasks: "mcpg:integration=3"`).
+        required: false
+        type: string
+        default: ""
+
     secrets:
       # Self-hosted cache plumbing — declared so cross-org callers can pass
       # them explicitly. The plan job doesn't run heavy tasks but the
@@ -283,6 +329,9 @@ jobs:
           TARGETS_CSV: ${{ inputs.targets }}
           AFFECTED_ONLY: ${{ inputs.affected_only }}
           EXCLUDE_PROJECTS: ${{ inputs.exclude_projects }}
+          WEIGHTS_FILE: ${{ inputs.weights_file }}
+          DEFAULT_WEIGHT: ${{ inputs.default_weight }}
+          SPLIT_TASKS: ${{ inputs.split_tasks }}
           LINT_SHARDS: ${{ inputs.lint_shards }}
           TEST_SHARDS: ${{ inputs.test_shards }}
           BUILD_SHARDS: ${{ inputs.build_shards }}
@@ -327,6 +376,44 @@ jobs:
             echo "ℹ️  exclude_projects active: /^(${EXCLUDE_RE})$/ (excluded from shards; gates unaffected)"
           fi
 
+          # Load the weights map (v5.2). Missing/unreadable file → empty
+          # map → every project weighs DEFAULT_WEIGHT → LPT degenerates
+          # to count-balancing, but we keep the alphabetical path as the
+          # explicit fallback so behaviour without the input is
+          # bit-for-bit unchanged.
+          WEIGHTS_JSON='{}'
+          USE_WEIGHTS=false
+          if [ -n "${WEIGHTS_FILE:-}" ] && [ -f "$WEIGHTS_FILE" ]; then
+            if WEIGHTS_JSON=$(jq -c 'if type == "object" then . else error("not an object") end' "$WEIGHTS_FILE" 2>/dev/null); then
+              USE_WEIGHTS=true
+              echo "ℹ️  weights_file loaded: $WEIGHTS_FILE ($(echo "$WEIGHTS_JSON" | jq 'length') entries, default ${DEFAULT_WEIGHT}s) — LPT packing active"
+            else
+              WEIGHTS_JSON='{}'
+              echo "::warning::weights_file '$WEIGHTS_FILE' is not a JSON object — falling back to alphabetical chunking"
+            fi
+          elif [ -n "${WEIGHTS_FILE:-}" ]; then
+            echo "::warning::weights_file '$WEIGHTS_FILE' not found — falling back to alphabetical chunking"
+          fi
+
+          # Parse split_tasks (v5.2): `<project>:<target>=<parts>` entries.
+          # Keys land in SPLIT_PARTS["project:target"]=N.
+          declare -A SPLIT_PARTS=()
+          if [ -n "${SPLIT_TASKS:-}" ]; then
+            IFS=';' read -ra SPLIT_ENTRIES <<< "$SPLIT_TASKS"
+            for se in "${SPLIT_ENTRIES[@]}"; do
+              se="$(echo "$se" | xargs)"
+              [ -z "$se" ] && continue
+              key="${se%%=*}"
+              parts="${se##*=}"
+              if [[ "$key" != *:* || ! "$parts" =~ ^[0-9]+$ || "$parts" -lt 2 ]]; then
+                echo "::warning::split_tasks entry '$se' malformed (want project:target=N, N≥2) — ignored"
+                continue
+              fi
+              SPLIT_PARTS["$key"]="$parts"
+              echo "ℹ️  split task: $key → $parts partition rows (configurations p1of${parts}..p${parts}of${parts})"
+            done
+          fi
+
           IFS=',' read -ra TARGETS <<< "$TARGETS_CSV"
           for raw in "${TARGETS[@]}"; do
             target="$(echo "$raw" | xargs)"
@@ -350,6 +437,31 @@ jobs:
               [ "$before" -ne "$after" ] && echo "ℹ️  target=$target: excluded $((before - after)) project(s) from shards"
             fi
 
+            # Pull split tasks out of this target's pool and emit their
+            # dedicated partition rows (one per part, each carrying the
+            # `configuration` the caller's nx project must define).
+            for key in "${!SPLIT_PARTS[@]}"; do
+              sp_project="${key%%:*}"
+              sp_target="${key##*:}"
+              [ "$sp_target" = "$target" ] || continue
+              if echo "$proj_json" | jq -e --arg p "$sp_project" 'index($p) != null' >/dev/null; then
+                proj_json=$(echo "$proj_json" | jq -c --arg p "$sp_project" '[ .[] | select(. != $p) ]')
+                parts="${SPLIT_PARTS[$key]}"
+                for ((k=1; k<=parts; k++)); do
+                  entry=$(jq -nc \
+                    --arg target "$target" \
+                    --argjson shard "$k" \
+                    --argjson shards_total "$parts" \
+                    --arg projects "$sp_project" \
+                    --arg configuration "p${k}of${parts}" \
+                    '{target: $target, shard: $shard, shards_total: $shards_total, projects: $projects, configuration: $configuration}')
+                  matrix_entries=$(echo "$matrix_entries" | jq -c --argjson e "$entry" '. + [$e]')
+                  has_shards=true
+                done
+                echo "📋 target=$target: $sp_project split into $parts partition row(s)"
+              fi
+            done
+
             project_count=$(echo "$proj_json" | jq 'length')
             if [ "$project_count" -eq 0 ]; then
               echo "ℹ️  No affected projects for target=$target — skipping"
@@ -363,30 +475,73 @@ jobs:
             fi
             [ "$shards" -lt 1 ] && shards=1
 
-            # Split the project list into $shards contiguous chunks. Sort
-            # by name first so chunking is deterministic across runs.
-            sorted_csv=$(echo "$proj_json" | jq -r 'sort | join(",")')
-            IFS=',' read -ra ALL <<< "$sorted_csv"
+            if [ "$USE_WEIGHTS" = "true" ] && [ "$shards" -gt 1 ]; then
+              # ── LPT greedy bin-packing ────────────────────────────────
+              # Sort projects by weight desc (name asc tiebreak for
+              # determinism), assign each to the currently-lightest
+              # shard. Classic 4/3-approximation — plenty for CI lanes.
+              mapfile -t WEIGHTED < <(echo "$proj_json" | jq -r --argjson w "$WEIGHTS_JSON" --argjson d "$DEFAULT_WEIGHT" --arg t "$target" \
+                '.[] | "\(($w[. + ":" + $t] // $d))\t\(.)"' | sort -t$'\t' -k1,1nr -k2,2)
 
-            chunk_size=$(( (project_count + shards - 1) / shards ))
-            for ((i=0; i<shards; i++)); do
-              start=$(( i * chunk_size ))
-              [ "$start" -ge "$project_count" ] && break
-              end=$(( start + chunk_size ))
-              [ "$end" -gt "$project_count" ] && end="$project_count"
-              chunk=$(IFS=','; echo "${ALL[*]:start:chunk_size}")
+              declare -a SHARD_LOAD=() SHARD_MEMBERS=()
+              for ((i=0; i<shards; i++)); do SHARD_LOAD[$i]=0; SHARD_MEMBERS[$i]=""; done
 
-              entry=$(jq -nc \
-                --arg target "$target" \
-                --argjson shard $((i+1)) \
-                --argjson shards_total "$shards" \
-                --arg projects "$chunk" \
-                '{target: $target, shard: $shard, shards_total: $shards_total, projects: $projects}')
-              matrix_entries=$(echo "$matrix_entries" | jq -c --argjson e "$entry" '. + [$e]')
-              has_shards=true
-            done
+              for row in "${WEIGHTED[@]}"; do
+                w="${row%%$'\t'*}"
+                p="${row#*$'\t'}"
+                # argmin over shard loads (first match wins → stable).
+                min_i=0
+                for ((i=1; i<shards; i++)); do
+                  if [ "${SHARD_LOAD[$i]%.*}" -lt "${SHARD_LOAD[$min_i]%.*}" ]; then min_i=$i; fi
+                done
+                SHARD_LOAD[$min_i]=$(( ${SHARD_LOAD[$min_i]%.*} + ${w%.*} ))
+                if [ -z "${SHARD_MEMBERS[$min_i]}" ]; then
+                  SHARD_MEMBERS[$min_i]="$p"
+                else
+                  SHARD_MEMBERS[$min_i]="${SHARD_MEMBERS[$min_i]},$p"
+                fi
+              done
 
-            echo "📋 target=$target: $project_count project(s) across $shards shard(s)"
+              for ((i=0; i<shards; i++)); do
+                [ -z "${SHARD_MEMBERS[$i]}" ] && continue
+                entry=$(jq -nc \
+                  --arg target "$target" \
+                  --argjson shard $((i+1)) \
+                  --argjson shards_total "$shards" \
+                  --arg projects "${SHARD_MEMBERS[$i]}" \
+                  '{target: $target, shard: $shard, shards_total: $shards_total, projects: $projects}')
+                matrix_entries=$(echo "$matrix_entries" | jq -c --argjson e "$entry" '. + [$e]')
+                has_shards=true
+                echo "    shard $((i+1)): ~${SHARD_LOAD[$i]}s — ${SHARD_MEMBERS[$i]}"
+              done
+              unset SHARD_LOAD SHARD_MEMBERS
+
+              echo "📋 target=$target: $project_count project(s) LPT-packed across $shards shard(s)"
+            else
+              # ── Alphabetical contiguous chunks (legacy default) ───────
+              sorted_csv=$(echo "$proj_json" | jq -r 'sort | join(",")')
+              IFS=',' read -ra ALL <<< "$sorted_csv"
+
+              chunk_size=$(( (project_count + shards - 1) / shards ))
+              for ((i=0; i<shards; i++)); do
+                start=$(( i * chunk_size ))
+                [ "$start" -ge "$project_count" ] && break
+                end=$(( start + chunk_size ))
+                [ "$end" -gt "$project_count" ] && end="$project_count"
+                chunk=$(IFS=','; echo "${ALL[*]:start:chunk_size}")
+
+                entry=$(jq -nc \
+                  --arg target "$target" \
+                  --argjson shard $((i+1)) \
+                  --argjson shards_total "$shards" \
+                  --arg projects "$chunk" \
+                  '{target: $target, shard: $shard, shards_total: $shards_total, projects: $projects}')
+                matrix_entries=$(echo "$matrix_entries" | jq -c --argjson e "$entry" '. + [$e]')
+                has_shards=true
+              done
+
+              echo "📋 target=$target: $project_count project(s) across $shards shard(s)"
+            fi
           done
 
           # Final matrix wraps in {include: [...]} so callers consume via

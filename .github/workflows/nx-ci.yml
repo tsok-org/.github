@@ -804,11 +804,13 @@ jobs:
           # shellcheck disable=SC2086 -- intentional word splitting
           sudo apt-get install -y --no-install-recommends $pkgs
 
-      # ── Container mode (v5): export caller-provided env vars first so
-      # language packs and downstream nx commands see them. Empty
-      # `extra_env_json: "{}"` is a no-op.
-      - name: Apply extra env vars (container mode)
-        if: inputs.container_image != '' && inputs.extra_env_json != '' && inputs.extra_env_json != '{}'
+      # ── Export caller-provided env vars first so language packs and
+      # downstream nx commands see them. Empty `extra_env_json: "{}"` is
+      # a no-op. Originally container-only; relaxed to host mode too so
+      # host-mode callers can inject e.g. SCCACHE_* / cache endpoints
+      # without a reusable-workflow change per variable.
+      - name: Apply extra env vars
+        if: inputs.extra_env_json != '' && inputs.extra_env_json != '{}'
         shell: bash
         env:
           EXTRA_ENV_JSON: ${{ inputs.extra_env_json }}
@@ -833,12 +835,17 @@ jobs:
           working_directory: ${{ inputs.working_directory }}
           frozen_lockfile: "true"
 
-      # ── Container mode: language-specific packs. Each pack is a thin
-      # composite that does its language's CI-glue extras (env validation,
-      # cache scoping, tool installs). NOT language toolchain install —
-      # that's the container image's responsibility.
+      # ── Language-specific packs. Each pack is a thin composite that does
+      # its language's CI-glue extras (env validation, cache scoping, tool
+      # installs). NOT language toolchain install — that's the container
+      # image's (or host runner image's) responsibility. Runs in BOTH
+      # modes since v5.1: host mode used to delegate this to the legacy
+      # environment-setup path, which is deprecation-gated now — without
+      # the pack, host-mode jobs would get no Rust glue (nextest install,
+      # sccache enablement) at all. The composite gates its container-only
+      # steps internally on the container_image input it receives.
       - name: Rust language pack
-        if: inputs.container_image != '' && contains(format(',{0},', inputs.language_packs), ',rust,')
+        if: contains(format(',{0},', inputs.language_packs), ',rust,')
         uses: tsok-org/.github/actions/nx-rust-setup@v5
         with:
           target: ${{ inputs.target }}
