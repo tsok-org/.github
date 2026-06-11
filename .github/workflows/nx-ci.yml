@@ -459,6 +459,31 @@ on:
         default: ""
 
       # ─────────────────────────────────────────────────────────────────────────
+      # Caller setup commands (v5.3 addition)
+      # ─────────────────────────────────────────────────────────────────────────
+      # Arbitrary shell to run after workspace setup, before language packs
+      # and the nx invocation. Runs in BOTH modes. This is the successor to
+      # the .environment.yml "services"/tooling escape hatch the legacy
+      # environment-setup provided: callers whose test suites need an extra
+      # binary on PATH (a pinned nats-server, a CLI fixture, …) version the
+      # install script in THEIR repo and invoke it here — the diff lives in
+      # the calling repo's PR, not in the reusable layer.
+      setup_commands:
+        description: |
+          Multi-line bash to run before the nx invocation (after checkout +
+          workspace setup). Use for caller-specific tooling installs that
+          neither apt (system_packages) nor the container image covers.
+          Prefer invoking a script committed to the calling repo over
+          inlining logic here. A failing command fails the job.
+
+          Example:
+            setup_commands: |
+              bash tools/ci/ensure-nats-server.sh
+        required: false
+        type: string
+        default: ""
+
+      # ─────────────────────────────────────────────────────────────────────────
       # Nx target configuration suffix (v5 addition)
       # ─────────────────────────────────────────────────────────────────────────
       # Nx supports per-target configurations: `nx run myproj:test:pg17`.
@@ -841,6 +866,17 @@ jobs:
         with:
           working_directory: ${{ inputs.working_directory }}
           frozen_lockfile: "true"
+
+      # ── Caller setup commands (v5.3): repo-specific tooling installs
+      # that neither apt nor the image covers (see the input's docs).
+      # Runs after workspace setup so the commands can use repo scripts
+      # AND node_modules tooling; before language packs so installed
+      # binaries are on PATH for everything that follows.
+      - name: Run caller setup commands
+        if: inputs.setup_commands != ''
+        shell: bash
+        working-directory: ${{ inputs.working_directory }}
+        run: ${{ inputs.setup_commands }}
 
       # ── Language-specific packs. Each pack is a thin composite that does
       # its language's CI-glue extras (env validation, cache scoping, tool
