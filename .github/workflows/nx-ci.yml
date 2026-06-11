@@ -941,9 +941,13 @@ jobs:
             CMD="$CMD run-many"
           fi
 
-          # v5: append :<configuration> suffix iff target_configuration is set.
+          # v5: pass --configuration iff target_configuration is set. (The
+          # -t target:configuration colon form looks supported but run-many
+          # silently matches NOTHING for inferred-target configurations —
+          # nx prints "projects do not have a configuration" and exits 0,
+          # a false green. The --configuration flag resolves correctly.)
           TARGET_SUFFIX="${{ inputs.target_configuration }}"
-          CMD="$CMD -t lint${TARGET_SUFFIX:+:$TARGET_SUFFIX} --parallel=${{ inputs.parallel }}"
+          CMD="$CMD -t lint${TARGET_SUFFIX:+ --configuration $TARGET_SUFFIX} --parallel=${{ inputs.parallel }}"
 
           if [ -n "${{ inputs.exclude_projects }}" ]; then
             CMD="$CMD --exclude=${{ inputs.exclude_projects }}"
@@ -997,9 +1001,13 @@ jobs:
           # `cargo llvm-cov ...` produces lcov.info as a side effect); the
           # `coverage` input on this workflow only gates whether we *upload*
           # those lcov artifacts downstream, not which target we run.
-          # v5: append :<configuration> suffix iff target_configuration is set.
+          # v5: pass --configuration iff target_configuration is set. (The
+          # -t target:configuration colon form looks supported but run-many
+          # silently matches NOTHING for inferred-target configurations —
+          # nx prints "projects do not have a configuration" and exits 0,
+          # a false green. The --configuration flag resolves correctly.)
           TARGET_SUFFIX="${{ inputs.target_configuration }}"
-          CMD="$CMD -t test${TARGET_SUFFIX:+:$TARGET_SUFFIX} --parallel=${{ inputs.parallel }}"
+          CMD="$CMD -t test${TARGET_SUFFIX:+ --configuration $TARGET_SUFFIX} --parallel=${{ inputs.parallel }}"
 
           if [ -n "${{ inputs.exclude_projects }}" ]; then
             CMD="$CMD --exclude=${{ inputs.exclude_projects }}"
@@ -1051,10 +1059,14 @@ jobs:
           # Projects without an `integration` target are skipped by Nx,
           # so `run-many -t integration` is safe to run across every
           # project even when only a subset declares the target.
-          # v5: append :<configuration> suffix iff target_configuration is set.
+          # v5: pass --configuration iff target_configuration is set. (The
+          # -t target:configuration colon form looks supported but run-many
+          # silently matches NOTHING for inferred-target configurations —
+          # nx prints "projects do not have a configuration" and exits 0,
+          # a false green. The --configuration flag resolves correctly.)
           # This is the common case for per-DB-engine matrices (pg14/pg17 etc).
           TARGET_SUFFIX="${{ inputs.target_configuration }}"
-          CMD="$CMD -t integration${TARGET_SUFFIX:+:$TARGET_SUFFIX} --parallel=${{ inputs.parallel }}"
+          CMD="$CMD -t integration${TARGET_SUFFIX:+ --configuration $TARGET_SUFFIX} --parallel=${{ inputs.parallel }}"
 
           if [ -n "${{ inputs.exclude_projects }}" ]; then
             CMD="$CMD --exclude=${{ inputs.exclude_projects }}"
@@ -1139,9 +1151,13 @@ jobs:
             CMD="$CMD run-many"
           fi
 
-          # v5: append :<configuration> suffix iff target_configuration is set.
+          # v5: pass --configuration iff target_configuration is set. (The
+          # -t target:configuration colon form looks supported but run-many
+          # silently matches NOTHING for inferred-target configurations —
+          # nx prints "projects do not have a configuration" and exits 0,
+          # a false green. The --configuration flag resolves correctly.)
           TARGET_SUFFIX="${{ inputs.target_configuration }}"
-          CMD="$CMD -t build${TARGET_SUFFIX:+:$TARGET_SUFFIX} --parallel=${{ inputs.parallel }}"
+          CMD="$CMD -t build${TARGET_SUFFIX:+ --configuration $TARGET_SUFFIX} --parallel=${{ inputs.parallel }}"
 
           if [ -n "${{ inputs.exclude_projects }}" ]; then
             CMD="$CMD --exclude=${{ inputs.exclude_projects }}"
@@ -1190,9 +1206,13 @@ jobs:
             CMD="$CMD run-many"
           fi
 
-          # v5: append :<configuration> suffix iff target_configuration is set.
+          # v5: pass --configuration iff target_configuration is set. (The
+          # -t target:configuration colon form looks supported but run-many
+          # silently matches NOTHING for inferred-target configurations —
+          # nx prints "projects do not have a configuration" and exits 0,
+          # a false green. The --configuration flag resolves correctly.)
           TARGET_SUFFIX="${{ inputs.target_configuration }}"
-          CMD="$CMD -t e2e${TARGET_SUFFIX:+:$TARGET_SUFFIX} --parallel=${{ inputs.parallel }}"
+          CMD="$CMD -t e2e${TARGET_SUFFIX:+ --configuration $TARGET_SUFFIX} --parallel=${{ inputs.parallel }}"
 
           if [ -n "${{ inputs.exclude_projects }}" ]; then
             CMD="$CMD --exclude=${{ inputs.exclude_projects }}"
@@ -1260,9 +1280,13 @@ jobs:
               CMD="$CMD run-many"
             fi
 
-            # v5: append :<configuration> suffix iff target_configuration is set.
+            # v5: pass --configuration iff target_configuration is set. (The
+          # -t target:configuration colon form looks supported but run-many
+          # silently matches NOTHING for inferred-target configurations —
+          # nx prints "projects do not have a configuration" and exits 0,
+          # a false green. The --configuration flag resolves correctly.)
             TARGET_SUFFIX="${{ inputs.target_configuration }}"
-            CMD="$CMD -t ${TASK}${TARGET_SUFFIX:+:$TARGET_SUFFIX} --parallel=${{ inputs.parallel }}"
+            CMD="$CMD -t ${TASK}${TARGET_SUFFIX:+ --configuration $TARGET_SUFFIX} --parallel=${{ inputs.parallel }}"
 
             if [ -n "${{ inputs.exclude_projects }}" ]; then
               CMD="$CMD --exclude=${{ inputs.exclude_projects }}"
