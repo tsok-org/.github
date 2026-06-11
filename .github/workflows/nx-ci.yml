@@ -8,7 +8,7 @@
 # ┌─────────────────────────────────────────────────────────────────────────────┐
 # │ FEATURES                                                                    │
 # ├─────────────────────────────────────────────────────────────────────────────┤
-# │ • Declarative environment setup via .environment.yml                       │
+# │ • system_packages + language packs (legacy .environment.yml: deprecated)   │
 # │ • Automatic package manager detection (npm, pnpm, yarn, bun)               │
 # │ • Nx affected detection for optimized builds                               │
 # │ • Configurable lint, test, build, and e2e tasks                           │
@@ -745,13 +745,33 @@ jobs:
       # 🛠️ ENVIRONMENT SETUP
       # ════════════════════════════════════════════════════════════════════════
 
-      # ── Host mode: invoke the env-setup composite (legacy v1/v2 path) ────
-      # Reads .environment.yml, installs Node + Rust toolchain + apt deps
-      # + redis/nats/postgres/mysql servers on the host runner. Only fires
-      # when container_image is empty (the default).
-      - name: Setup environment (host mode)
+      # ── Host mode: legacy .environment.yml path (DEPRECATED) ─────────────
+      # The env-setup composite only fires when the workspace actually
+      # ships the config file — the mechanism is deprecated in favor of
+      # the explicit `system_packages` input + language packs, and a
+      # workspace without the file must not pay (or risk) the legacy
+      # step. Detection is a plain file check so removing
+      # .environment.yml from a workspace fully retires the path.
+      - name: Detect legacy environment config
+        id: legacy-envcfg
         if: inputs.container_image == ''
-        uses: tsok-org/.github/actions/environment-setup@main
+        shell: bash
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          ENV_CONFIG: ${{ inputs.environment_config }}
+        run: |
+          set -euo pipefail
+          if [ -n "$ENV_CONFIG" ] && [ -f "$ENV_CONFIG" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "⚠️  ${ENV_CONFIG} found — running the DEPRECATED legacy environment-setup. Migrate to system_packages + language packs."
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "ℹ️  no ${ENV_CONFIG:-environment config} in the workspace — legacy environment-setup skipped."
+          fi
+
+      - name: Setup environment (host mode, legacy)
+        if: inputs.container_image == '' && steps.legacy-envcfg.outputs.present == 'true'
+        uses: tsok-org/.github/actions/environment-setup@v5
         with:
           config: ${{ inputs.environment_config }}
           working_directory: ${{ inputs.working_directory }}
@@ -808,7 +828,7 @@ jobs:
       # package manager from lockfiles and runs the frozen-lockfile install.
       - name: Workspace setup (container mode)
         if: inputs.container_image != ''
-        uses: tsok-org/.github/actions/nx-workspace-setup@main
+        uses: tsok-org/.github/actions/nx-workspace-setup@v5
         with:
           working_directory: ${{ inputs.working_directory }}
           frozen_lockfile: "true"
@@ -819,7 +839,7 @@ jobs:
       # that's the container image's responsibility.
       - name: Rust language pack
         if: inputs.container_image != '' && contains(format(',{0},', inputs.language_packs), ',rust,')
-        uses: tsok-org/.github/actions/nx-rust-setup@main
+        uses: tsok-org/.github/actions/nx-rust-setup@v5
         with:
           target: ${{ inputs.target }}
           shard: ${{ inputs.shard }}

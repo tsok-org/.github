@@ -126,6 +126,27 @@ on:
         type: string
         default: ""
 
+      # ─────────────────────────────────────────────────────────────────────────
+      # Exclusions (v5.1 addition)
+      # ─────────────────────────────────────────────────────────────────────────
+      exclude_projects:
+        description: |
+          Comma-separated shell-glob patterns removed from the SHARD
+          distribution (every target). Use for project families that need
+          their own lane with different tooling (e.g. Terraform/Go/Pulumi
+          projects that would otherwise land in a generic shard missing
+          `tofu`/`go`):
+
+            exclude_projects: "terraform-*,pulumi-*"
+
+          Excluded projects still count for GATE evaluation — pair an
+          exclusion with a gate (`has_iac=terraform-*`) and a dedicated
+          caller-side job so the work still runs, just in the right lane.
+          Empty (default) excludes nothing.
+        required: false
+        type: string
+        default: ""
+
     secrets:
       # Self-hosted cache plumbing — declared so cross-org callers can pass
       # them explicitly. The plan job doesn't run heavy tasks but the
@@ -261,6 +282,7 @@ jobs:
           NX_HEAD: ${{ steps.set-shas.outputs.head }}
           TARGETS_CSV: ${{ inputs.targets }}
           AFFECTED_ONLY: ${{ inputs.affected_only }}
+          EXCLUDE_PROJECTS: ${{ inputs.exclude_projects }}
           LINT_SHARDS: ${{ inputs.lint_shards }}
           TEST_SHARDS: ${{ inputs.test_shards }}
           BUILD_SHARDS: ${{ inputs.build_shards }}
@@ -294,6 +316,17 @@ jobs:
           matrix_entries='[]'
           has_shards=false
 
+          # Compile the exclude_projects globs into one anchored regex
+          # alternation, once. Only `*` is translated (the documented
+          # subset); every other char is regex-escaped.
+          EXCLUDE_RE=""
+          if [ -n "${EXCLUDE_PROJECTS:-}" ]; then
+            EXCLUDE_RE=$(echo "$EXCLUDE_PROJECTS" | tr ',\n' '  ' | xargs -n1 2>/dev/null \
+              | sed -e 's/[.[\]^$+?(){}|\\\/]/\\&/g' -e 's/\*/.*/g' \
+              | paste -sd'|' -)
+            echo "ℹ️  exclude_projects active: /^(${EXCLUDE_RE})$/ (excluded from shards; gates unaffected)"
+          fi
+
           IFS=',' read -ra TARGETS <<< "$TARGETS_CSV"
           for raw in "${TARGETS[@]}"; do
             target="$(echo "$raw" | xargs)"
@@ -305,6 +338,16 @@ jobs:
               proj_json=$($NX_CMD show projects --affected --base="$NX_BASE" --head="$NX_HEAD" -t "$target" --json 2>/dev/null || echo '[]')
             else
               proj_json=$($NX_CMD show projects -t "$target" --json 2>/dev/null || echo '[]')
+            fi
+
+            # Drop excluded families from the shard distribution. Gate
+            # evaluation (separate step) still sees them, so callers can
+            # route excluded projects to a dedicated lane.
+            if [ -n "$EXCLUDE_RE" ]; then
+              before=$(echo "$proj_json" | jq 'length')
+              proj_json=$(echo "$proj_json" | jq -c --arg re "^(${EXCLUDE_RE})$" '[ .[] | select(test($re) | not) ]')
+              after=$(echo "$proj_json" | jq 'length')
+              [ "$before" -ne "$after" ] && echo "ℹ️  target=$target: excluded $((before - after)) project(s) from shards"
             fi
 
             project_count=$(echo "$proj_json" | jq 'length')
