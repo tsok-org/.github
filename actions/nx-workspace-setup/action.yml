@@ -1,10 +1,10 @@
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║                       NX WORKSPACE SETUP COMPOSITE ACTION                    ║
 # ╠══════════════════════════════════════════════════════════════════════════════╣
-# ║  Bootstraps an Nx workspace inside a container-mode CI job. Detects the      ║
-# ║  package manager from lockfiles and runs the frozen-lockfile install.        ║
-# ║  ALWAYS needed in container mode (because nx itself is a Node package),     ║
-# ║  regardless of what languages the workspace's app code is written in.        ║
+# ║  Bootstraps an Nx workspace inside a CI job (container or host mode).       ║
+# ║  Detects the package manager from lockfiles and runs the frozen-lockfile     ║
+# ║  install. ALWAYS needed (nx itself is a Node package), regardless of        ║
+# ║  what languages the workspace's app code is written in.                      ║
 # ║                                                                              ║
 # ║  Why this is NOT a "TypeScript pack":                                        ║
 # ║    A pure-Rust workspace using Nx (e.g. mcpg-dev/source-code with           ║
@@ -21,17 +21,16 @@
 # │ 2. Run the manager's frozen-lockfile install command.                      │
 # │                                                                             │
 # │ Does NOT install Node, pnpm, yarn, npm, or bun — those are expected to be  │
-# │ baked into the container image. For host mode, environment-setup handles    │
-# │ the install via .environment.yml. For non-container github-hosted callers   │
-# │ who want auto-install, use actions/setup-node directly instead.             │
+# │ baked into the container image / host runner image. For github-hosted       │
+# │ callers who want auto-install, use actions/setup-node directly instead.     │
 # └─────────────────────────────────────────────────────────────────────────────┘
 
 name: "Nx Workspace Setup"
 description: |
-  Install the Nx workspace's Node dependencies inside a container-mode
-  CI job. Auto-detects the package manager from the lockfile and runs
+  Install the Nx workspace's Node dependencies (container or host
+  mode). Auto-detects the package manager from the lockfile and runs
   the frozen-lockfile install. Does NOT install the manager itself —
-  the container image is expected to provide it.
+  the container/runner image is expected to provide it.
 
 inputs:
   working_directory:

@@ -825,11 +825,18 @@ jobs:
             echo "🌱 exported $key"
           done < <(echo "$EXTRA_ENV_JSON" | jq -r 'to_entries[] | "\(.key)\t\(.value)"')
 
-      # ── Container mode: ALWAYS install Nx workspace deps (nx itself is
-      # a Node package, regardless of app-code language). Detects the
-      # package manager from lockfiles and runs the frozen-lockfile install.
-      - name: Workspace setup (container mode)
-        if: inputs.container_image != ''
+      # ── ALWAYS install Nx workspace deps (nx itself is a Node package,
+      # regardless of app-code language). Detects the package manager
+      # from lockfiles and runs the frozen-lockfile install.
+      #
+      # Both modes since v5.1: host mode used to get its `pnpm install`
+      # from the legacy environment-setup path, which is
+      # deprecation-gated on `.environment.yml` existing — once a caller
+      # deleted that file, NOTHING installed node_modules in host mode
+      # and every `pnpm nx …` died with "Command nx not found". When the
+      # legacy step does run (file present), it executes before this one
+      # and the second frozen install is a fast no-op.
+      - name: Workspace setup
         uses: tsok-org/.github/actions/nx-workspace-setup@v5
         with:
           working_directory: ${{ inputs.working_directory }}
