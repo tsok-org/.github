@@ -325,19 +325,26 @@ jobs:
           PATTERN: ${{ inputs.timing_jobs_pattern }}
         run: |
           set -uo pipefail
+          # curl + jq only — the HOST-mode ARC runners carry no `gh` CLI
+          # (first live run degraded silently because of exactly that;
+          # every skip path now says why).
           out=/tmp/harvested-weights.json
-          run_info=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" 2>/dev/null) || exit 0
+          for tool in curl jq python3; do
+            command -v "$tool" >/dev/null 2>&1 || { echo "ℹ️  weights harvest skipped: '$tool' not on PATH"; exit 0; }
+          done
+          api() { curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "https://api.github.com/$1"; }
+          run_info=$(api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}") || { echo "ℹ️  weights harvest skipped: run lookup failed"; exit 0; }
           wf_id=$(jq -r '.workflow_id' <<<"$run_info")
           branch=$(jq -r '.head_branch' <<<"$run_info")
-          prev=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${wf_id}/runs?branch=${branch}&status=completed&per_page=5" \
-            --jq "[.workflow_runs[] | select(.id != ${GITHUB_RUN_ID})][0].id" 2>/dev/null) || exit 0
-          [ -z "$prev" ] || [ "$prev" = "null" ] && { echo "ℹ️  no previous completed run — weights harvest skipped"; exit 0; }
-          mapfile -t job_ids < <(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${prev}/jobs?per_page=100" \
-            --jq ".jobs[] | select(.name | test(\"${PATTERN}\")) | select(.conclusion == \"success\") | .id" 2>/dev/null | head -16)
-          [ "${#job_ids[@]}" -eq 0 ] && { echo "ℹ️  previous run ${prev} has no successful '${PATTERN}' jobs — harvest skipped"; exit 0; }
+          prev=$(api "repos/${GITHUB_REPOSITORY}/actions/workflows/${wf_id}/runs?branch=${branch}&status=completed&per_page=5" \
+            | jq -r "[.workflow_runs[] | select(.id != ${GITHUB_RUN_ID})][0].id") || { echo "ℹ️  weights harvest skipped: prior-run lookup failed"; exit 0; }
+          if [ -z "$prev" ] || [ "$prev" = "null" ]; then echo "ℹ️  weights harvest skipped: no previous completed run"; exit 0; fi
+          mapfile -t job_ids < <(api "repos/${GITHUB_REPOSITORY}/actions/runs/${prev}/jobs?per_page=100" \
+            | jq -r ".jobs[] | select(.name | test(\"${PATTERN}\")) | select(.conclusion == \"success\") | .id" | head -16)
+          if [ "${#job_ids[@]}" -eq 0 ]; then echo "ℹ️  weights harvest skipped: run ${prev} has no successful '${PATTERN}' jobs"; exit 0; fi
           logdir=$(mktemp -d)
           for id in "${job_ids[@]}"; do
-            gh api "repos/${GITHUB_REPOSITORY}/actions/jobs/${id}/logs" > "${logdir}/${id}.log" 2>/dev/null || true
+            api "repos/${GITHUB_REPOSITORY}/actions/jobs/${id}/logs" > "${logdir}/${id}.log" 2>/dev/null || true
           done
           python3 - "$out" "${logdir}"/*.log <<'PYEOF' || exit 0
           import json, math, re, sys
