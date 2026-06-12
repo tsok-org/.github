@@ -176,6 +176,29 @@ on:
         type: number
         default: 30
 
+      harvest_weights:
+        description: |
+          When no weights_file is supplied, derive task weights
+          automatically from the PREVIOUS completed run of the calling
+          workflow on the same branch (its shard-job logs are fetched
+          via the GitHub API and each task's wall window measured).
+          Self-maintaining — nothing committed, nothing to refresh; any
+          failure degrades silently to alphabetical chunking. Requires
+          the caller to grant `actions: read` (the default GITHUB_TOKEN
+          in most repos already does).
+        required: false
+        type: boolean
+        default: true
+
+      timing_jobs_pattern:
+        description: |
+          Regex matched against the previous run's job names to select
+          which jobs' logs feed the weights harvest. The default matches
+          the conventional "… Shard (…)" matrix rows this plan emits.
+        required: false
+        type: string
+        default: "Shard"
+
       # ─────────────────────────────────────────────────────────────────────────
       # Task splitting (v5.2 addition)
       # ─────────────────────────────────────────────────────────────────────────
@@ -285,6 +308,82 @@ jobs:
         # successful workflow exists. Without this `git diff` blows up.
         run: git hash-object -w -t tree --stdin < /dev/null
 
+      # ── Self-harvesting task weights (v5.4) ──────────────────────────
+      # When the caller doesn't supply a weights_file, derive per-task
+      # weights from the PREVIOUS completed run of this same workflow on
+      # this branch: fetch its shard-job logs (job names matched by
+      # `timing_jobs_pattern`) and measure each task's wall window (gap
+      # between its nx group header and the next). Nothing is committed
+      # anywhere and there is no setting to maintain — the weights are
+      # always the last run's reality, and any failure here degrades
+      # silently to the legacy behavior. Failed (❌) and remote-cache
+      # (🔁) headers carry no/false cost signal and are skipped.
+      - name: Harvest task weights from previous run
+        if: inputs.weights_file == '' && inputs.harvest_weights
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PATTERN: ${{ inputs.timing_jobs_pattern }}
+        run: |
+          set -uo pipefail
+          out=/tmp/harvested-weights.json
+          run_info=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" 2>/dev/null) || exit 0
+          wf_id=$(jq -r '.workflow_id' <<<"$run_info")
+          branch=$(jq -r '.head_branch' <<<"$run_info")
+          prev=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${wf_id}/runs?branch=${branch}&status=completed&per_page=5" \
+            --jq "[.workflow_runs[] | select(.id != ${GITHUB_RUN_ID})][0].id" 2>/dev/null) || exit 0
+          [ -z "$prev" ] || [ "$prev" = "null" ] && { echo "ℹ️  no previous completed run — weights harvest skipped"; exit 0; }
+          mapfile -t job_ids < <(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${prev}/jobs?per_page=100" \
+            --jq ".jobs[] | select(.name | test(\"${PATTERN}\")) | select(.conclusion == \"success\") | .id" 2>/dev/null | head -16)
+          [ "${#job_ids[@]}" -eq 0 ] && { echo "ℹ️  previous run ${prev} has no successful '${PATTERN}' jobs — harvest skipped"; exit 0; }
+          logdir=$(mktemp -d)
+          for id in "${job_ids[@]}"; do
+            gh api "repos/${GITHUB_REPOSITORY}/actions/jobs/${id}/logs" > "${logdir}/${id}.log" 2>/dev/null || true
+          done
+          python3 - "$out" "${logdir}"/*.log <<'PYEOF' || exit 0
+          import json, math, re, sys
+          from datetime import datetime
+          ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+          TS = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z)\s?(.*)$")
+          # Plain task headers only: remote-cache replays end in
+          # "[remote cache]" and intentionally don't match.
+          GROUP = re.compile(r"##\[group\][^>]*> .*nx run.*\s+([\w\-]+):\"?([\w\-:]+)\"?\s*$")
+          weights = {}
+          for path in sys.argv[2:]:
+              tasks, cur = [], None
+              try:
+                  fh = open(path, errors="replace")
+              except OSError:
+                  continue
+              for raw in fh:
+                  line = ANSI.sub("", raw)
+                  m = TS.search(line)
+                  if not m:
+                      continue
+                  ts = datetime.fromisoformat(m.group(1).replace("Z", "+00:00"))
+                  gm = GROUP.search(m.group(2))
+                  if gm:
+                      if cur:
+                          tasks.append(cur)
+                      cur = {"k": f"{gm.group(1)}:{gm.group(2)}", "s": ts, "e": ts,
+                             "ok": "✅" in m.group(2)}
+                      continue
+                  if cur is not None:
+                      cur["e"] = ts
+              if cur:
+                  tasks.append(cur)
+              for t in tasks:
+                  if not t["ok"]:
+                      continue
+                  w = max(1, math.ceil((t["e"] - t["s"]).total_seconds()))
+                  weights[t["k"]] = max(weights.get(t["k"], 0), w)
+          if weights:
+              json.dump(weights, open(sys.argv[1], "w"))
+          print(f"harvested {len(weights)} task weights")
+          PYEOF
+          if [ -s "$out" ]; then
+            echo "ℹ️  task weights harvested from run ${prev} → ${out}"
+          fi
+
       - name: Detect package manager
         id: pkg
         run: |
@@ -393,6 +492,10 @@ jobs:
             fi
           elif [ -n "${WEIGHTS_FILE:-}" ]; then
             echo "::warning::weights_file '$WEIGHTS_FILE' not found — falling back to alphabetical chunking"
+          elif [ -s /tmp/harvested-weights.json ] && WEIGHTS_JSON=$(jq -c 'if type == "object" then . else error("no") end' /tmp/harvested-weights.json 2>/dev/null); then
+            # Self-harvested from the previous run (see the harvest step).
+            USE_WEIGHTS=true
+            echo "ℹ️  weights harvested from previous run ($(echo "$WEIGHTS_JSON" | jq 'length') entries, default ${DEFAULT_WEIGHT}s) — LPT packing active"
           fi
 
           # Parse split_tasks (v5.2): `<project>:<target>=<parts>` entries.
