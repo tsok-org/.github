@@ -300,6 +300,12 @@ on:
         type: string
         default: ""
 
+      nx_remote_cache_server:
+        description: "Nx self-hosted remote cache server URL (NX_SELF_HOSTED_REMOTE_CACHE_SERVER)."
+        required: false
+        type: string
+        default: "https://nx.tsok.org/cache"
+
     secrets:
       # GitHub App authentication (recommended for branch protection bypass)
       github_app_private_key:
@@ -325,20 +331,22 @@ on:
         description: "Nx Cloud access token for remote caching"
         required: false
 
-      # Self-hosted Nx cache plumbing (@nx/s3-cache + free `nx register`
-      # activation key). Declared explicitly because cross-org `secrets:
-      # inherit` does NOT propagate org-level secrets — declared
-      # workflow_call.secrets DO propagate when callers pass them.
-      nx_key:
-        description: "Nx self-hosted cache activation key (free via `nx register`)"
+      # Self-hosted Nx remote cache token (RW populates, RO read-only).
+      # Declared explicitly because cross-org `secrets: inherit` does NOT
+      # propagate org-level secrets — declared workflow_call.secrets DO
+      # propagate when callers pass them.
+      nx_remote_cache_token:
+        description: "Nx self-hosted remote cache token (NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN)"
         required: false
 
+      # sccache (rustc-level compile cache) bucket creds — consumed by
+      # actions/nx-rust-setup, independent of the Nx remote cache.
       aws_access_key_id:
-        description: "AWS_ACCESS_KEY_ID for @nx/s3-cache bucket access"
+        description: "AWS_ACCESS_KEY_ID for the sccache bucket"
         required: false
 
       aws_secret_access_key:
-        description: "AWS_SECRET_ACCESS_KEY for @nx/s3-cache bucket access"
+        description: "AWS_SECRET_ACCESS_KEY for the sccache bucket"
         required: false
 
     outputs:
@@ -354,15 +362,13 @@ env:
   # Node 20. See nx-ci.yml for the rationale.
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
-  # Self-hosted cache plumbing (@nx/s3-cache). As of Nx 21+ the plugin is
-  # FREE — no paid Powerpack license required. It needs three env vars:
-  #   • NX_KEY: free activation key obtained via `nx register` once per
-  #     workspace and stored as an org/repo secret.
-  #   • AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY: bucket creds the
-  #     plugin uses against the S3 endpoint declared in nx.json.
-  # Without these, the plugin prints "No self-hosted cache key found.
-  # S3 cache will not be used" and silently falls back to local cache.
-  NX_KEY: ${{ secrets.nx_key }}
+  # Self-hosted Nx remote cache (Nx 21+ core — FREE, no Powerpack/NX_KEY,
+  # no @nx/s3-cache plugin, no nx.json s3 block). Driven by the server
+  # URL (input) + access token (secret); no token ⇒ local cache only.
+  NX_SELF_HOSTED_REMOTE_CACHE_SERVER: ${{ inputs.nx_remote_cache_server }}
+  NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ secrets.nx_remote_cache_token }}
+  # sccache (rustc-level compile cache) bucket creds — consumed by
+  # actions/nx-rust-setup, independent of the Nx remote cache above.
   AWS_ACCESS_KEY_ID: ${{ secrets.aws_access_key_id }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.aws_secret_access_key }}
   # NX_CLOUD_ACCESS_TOKEN is intentionally NOT declared at workflow
@@ -374,8 +380,8 @@ env:
   # token at the step level instead, only when it's non-empty (see
   # the run-nx-release step's _NX_CLOUD_TOKEN_RAW handling).
   #
-  # This is unrelated to @nx/s3-cache (declared above) — that plugin
-  # uses AWS_* + NX_KEY and runs regardless of Nx Cloud SaaS state.
+  # This is unrelated to the self-hosted remote cache (declared
+  # above) — that runs on its own token regardless of Nx Cloud state.
 
 jobs:
   release:
@@ -617,7 +623,7 @@ jobs:
             export NX_CLOUD_ACCESS_TOKEN="$_NX_CLOUD_TOKEN_RAW"
             echo "📡 Nx Cloud: enabled"
           else
-            echo "📡 Nx Cloud: not configured (no token) — @nx/s3-cache continues unaffected"
+            echo "📡 Nx Cloud: not configured (no token) — the self-hosted remote cache is unaffected"
           fi
 
           PKG_MGR="${{ steps.pkg-manager.outputs.manager }}"

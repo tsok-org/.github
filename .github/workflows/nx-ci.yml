@@ -524,23 +524,19 @@ on:
         default: "{}"
 
       # ─────────────────────────────────────────────────────────────────────────
-      # Cache mode override (v5 addition)
+      # Self-hosted Nx remote cache server (v5 — replaces @nx/s3-cache)
       # ─────────────────────────────────────────────────────────────────────────
-      # The workflow auto-computes NX_POWERPACK_CACHE_MODE from the trigger
-      # (CREEP CVE-2025-36852 mitigation: PR runs are read-only, trusted refs
-      # are read-write). Callers with non-standard threat models can override.
-      nx_powerpack_cache_mode:
-        description: |
-          Override the auto-computed @nx/s3-cache mode. Default empty =
-          auto: read-only for `pull_request`, read-write for push/schedule/
-          workflow_dispatch. Valid explicit values: `read-only`, `read-write`,
-          `no-cache`.
-
-          Use to force read-only on workflow_dispatch from feature branches,
-          or to disable cache entirely for forensic re-runs.
+      # Built into Nx 21+ core: a generic HTTP cache server, no powerpack
+      # license / NX_KEY / nx.json s3 block. Defaults to the tsok-org
+      # cache; callers may override. Pair with the nx_remote_cache_token
+      # secret (no token ⇒ Nx falls back to local cache only). Write
+      # protection is the token (RW vs RO); for a public-fork threat model
+      # pass an RO token on pull_request and RW on trusted refs.
+      nx_remote_cache_server:
+        description: "Nx self-hosted remote cache server URL (NX_SELF_HOSTED_REMOTE_CACHE_SERVER)."
         required: false
         type: string
-        default: ""
+        default: "https://nx.tsok.org/cache"
 
     secrets:
       nx_cloud_access_token:
@@ -555,21 +551,23 @@ on:
         description: "GitHub App private key (optional)"
         required: false
 
-      # Self-hosted Nx cache plumbing (@nx/s3-cache + free `nx register`
-      # activation key). Declared explicitly so cross-org `secrets:
-      # inherit` callers can still surface them — org-level secrets do
-      # NOT cross organization boundaries via inherit, but declared
+      # Self-hosted Nx remote cache access token (RW populates the cache,
+      # RO is read-only). Declared explicitly so cross-org `secrets:
+      # inherit` callers can still surface it — org-level secrets do NOT
+      # cross organization boundaries via inherit, but declared
       # workflow_call.secrets DO propagate when callers pass them.
-      nx_key:
-        description: "Nx self-hosted cache activation key (free via `nx register`)"
+      nx_remote_cache_token:
+        description: "Nx self-hosted remote cache token (NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN)"
         required: false
 
+      # sccache (the rustc-level compilation cache) bucket creds — used
+      # by actions/nx-rust-setup, independent of the Nx remote cache.
       aws_access_key_id:
-        description: "AWS_ACCESS_KEY_ID for @nx/s3-cache bucket access"
+        description: "AWS_ACCESS_KEY_ID for the sccache bucket"
         required: false
 
       aws_secret_access_key:
-        description: "AWS_SECRET_ACCESS_KEY for @nx/s3-cache bucket access"
+        description: "AWS_SECRET_ACCESS_KEY for the sccache bucket"
         required: false
 
     outputs:
@@ -597,44 +595,21 @@ env:
   # https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
-  # Self-hosted cache plumbing (@nx/s3-cache). As of Nx 21+ the plugin is
-  # FREE — no paid Powerpack license required. It needs three env vars:
-  #   • NX_KEY: free activation key obtained via `nx register` once per
-  #     workspace and stored as an org/repo secret.
-  #   • AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY: bucket creds the
-  #     plugin uses against the S3 endpoint declared in nx.json.
-  # Without these, the plugin prints "No self-hosted cache key found.
-  # S3 cache will not be used" and silently falls back to local cache.
-  NX_KEY: ${{ secrets.nx_key }}
+  # Self-hosted Nx remote cache (built into Nx 21+ core — FREE, no
+  # Powerpack license / NX_KEY / @nx/s3-cache plugin / nx.json s3 block).
+  # The generic HTTP cache protocol needs only:
+  #   • NX_SELF_HOSTED_REMOTE_CACHE_SERVER — the cache URL (input).
+  #   • NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN — RW/RO token (secret).
+  # No token ⇒ Nx silently uses local cache only. Write protection is
+  # the token itself (RW vs RO), replacing the old NX_POWERPACK_CACHE_MODE
+  # CREEP mitigation — for a public-fork threat model pass an RO token on
+  # pull_request runs and RW on trusted refs (caller's choice of secret).
+  NX_SELF_HOSTED_REMOTE_CACHE_SERVER: ${{ inputs.nx_remote_cache_server }}
+  NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ secrets.nx_remote_cache_token }}
+  # sccache (rustc-level compile cache) bucket creds — consumed by
+  # actions/nx-rust-setup, independent of the Nx remote cache above.
   AWS_ACCESS_KEY_ID: ${{ secrets.aws_access_key_id }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.aws_secret_access_key }}
-  # CVE-2025-36852 (CREEP) — bucket-based remote caches let any writer
-  # poison main's task outputs. Mitigate by switching PR runs to
-  # read-only; only trusted refs (pushes to default/release branches,
-  # scheduled runs, and workflow_dispatch on the default branch) get
-  # write access. The @nx/s3-cache plugin honors this env var: any
-  # non-empty value other than the literal "read-only" enables
-  # read+write; "read-only" disables writes only.
-  #
-  # Trusted refs use the literal "read-write" rather than empty —
-  # the previous `&& '' || 'read-only'` form always resolves to
-  # 'read-only' in GH expressions because `'' || x` returns x. We
-  # use a non-empty truthy value here so the conditional behaves
-  # like an if/else.
-  #
-  # https://nx.dev/blog/cve-2025-36852-critical-cache-poisoning-vulnerability-creep
-  # v5: callers can override via `nx_powerpack_cache_mode` input. Default
-  # behavior (empty input) preserves the v4 auto-compute logic.
-  NX_POWERPACK_CACHE_MODE: >-
-    ${{
-      inputs.nx_powerpack_cache_mode != ''
-        && inputs.nx_powerpack_cache_mode
-        || (
-          (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-            && 'read-write'
-            || 'read-only'
-        )
-    }}
   # NX_CLOUD_ACCESS_TOKEN is intentionally NOT declared at workflow
   # level. Declaring it here evaluates `secrets.nx_cloud_access_token`
   # to "" when the secret isn't set, and an empty-but-present env var
@@ -997,8 +972,8 @@ jobs:
           # cloud interaction:
           #   - unset NX_CLOUD_ACCESS_TOKEN entirely (an empty env var
           #     still satisfies Nx's `if (env.X !== undefined)` checks
-          #     and triggers cloud-auth probes in plugins like
-          #     @nx/s3-cache, which fail loudly on empty credentials)
+          #     and triggers cloud-auth probes in some Nx plugins,
+          #     which fail loudly on empty credentials)
           #   - append `--no-cloud` to the nx invocation so the CLI
           #     also opts out at the command level (belt + suspenders)
           if [ "${{ inputs.nx_cloud_enabled }}" == "false" ]; then
@@ -1057,8 +1032,8 @@ jobs:
           # cloud interaction:
           #   - unset NX_CLOUD_ACCESS_TOKEN entirely (an empty env var
           #     still satisfies Nx's `if (env.X !== undefined)` checks
-          #     and triggers cloud-auth probes in plugins like
-          #     @nx/s3-cache, which fail loudly on empty credentials)
+          #     and triggers cloud-auth probes in some Nx plugins,
+          #     which fail loudly on empty credentials)
           #   - append `--no-cloud` to the nx invocation so the CLI
           #     also opts out at the command level (belt + suspenders)
           if [ "${{ inputs.nx_cloud_enabled }}" == "false" ]; then
@@ -1116,8 +1091,8 @@ jobs:
           # cloud interaction:
           #   - unset NX_CLOUD_ACCESS_TOKEN entirely (an empty env var
           #     still satisfies Nx's `if (env.X !== undefined)` checks
-          #     and triggers cloud-auth probes in plugins like
-          #     @nx/s3-cache, which fail loudly on empty credentials)
+          #     and triggers cloud-auth probes in some Nx plugins,
+          #     which fail loudly on empty credentials)
           #   - append `--no-cloud` to the nx invocation so the CLI
           #     also opts out at the command level (belt + suspenders)
           if [ "${{ inputs.nx_cloud_enabled }}" == "false" ]; then
@@ -1207,8 +1182,8 @@ jobs:
           # cloud interaction:
           #   - unset NX_CLOUD_ACCESS_TOKEN entirely (an empty env var
           #     still satisfies Nx's `if (env.X !== undefined)` checks
-          #     and triggers cloud-auth probes in plugins like
-          #     @nx/s3-cache, which fail loudly on empty credentials)
+          #     and triggers cloud-auth probes in some Nx plugins,
+          #     which fail loudly on empty credentials)
           #   - append `--no-cloud` to the nx invocation so the CLI
           #     also opts out at the command level (belt + suspenders)
           if [ "${{ inputs.nx_cloud_enabled }}" == "false" ]; then
@@ -1262,8 +1237,8 @@ jobs:
           # cloud interaction:
           #   - unset NX_CLOUD_ACCESS_TOKEN entirely (an empty env var
           #     still satisfies Nx's `if (env.X !== undefined)` checks
-          #     and triggers cloud-auth probes in plugins like
-          #     @nx/s3-cache, which fail loudly on empty credentials)
+          #     and triggers cloud-auth probes in some Nx plugins,
+          #     which fail loudly on empty credentials)
           #   - append `--no-cloud` to the nx invocation so the CLI
           #     also opts out at the command level (belt + suspenders)
           if [ "${{ inputs.nx_cloud_enabled }}" == "false" ]; then

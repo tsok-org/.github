@@ -216,11 +216,17 @@ on:
         type: string
         default: ""
 
+      nx_remote_cache_server:
+        description: "Nx self-hosted remote cache server URL (NX_SELF_HOSTED_REMOTE_CACHE_SERVER)."
+        required: false
+        type: string
+        default: "https://nx.tsok.org/cache"
+
     secrets:
-      # Self-hosted cache plumbing — declared so cross-org callers can pass
-      # them explicitly. The plan job doesn't run heavy tasks but the
-      # `nx show projects` invocation still reads nx.json's S3 cache config.
-      nx_key:
+      # Self-hosted remote cache token — declared so cross-org callers can
+      # pass it explicitly. The plan job doesn't run heavy tasks but the
+      # `nx show projects` invocation benefits from cache reads.
+      nx_remote_cache_token:
         required: false
       aws_access_key_id:
         required: false
@@ -260,13 +266,13 @@ env:
   # Node 20. See nx-ci.yml for the rationale.
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
-  # @nx/s3-cache wiring (free in Nx 21+). The plan job benefits from the
-  # remote cache when computing the affected graph; cheap to enable here.
-  NX_KEY: ${{ secrets.nx_key }}
+  # Self-hosted Nx remote cache (Nx 21+ core). The plan job benefits from
+  # cache reads when computing the affected graph; it runs no cacheable
+  # task outputs, so it never pollutes the cache regardless of token mode.
+  NX_SELF_HOSTED_REMOTE_CACHE_SERVER: ${{ inputs.nx_remote_cache_server }}
+  NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ secrets.nx_remote_cache_token }}
   AWS_ACCESS_KEY_ID: ${{ secrets.aws_access_key_id }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.aws_secret_access_key }}
-  # Plan never writes to the cache. Belt-and-suspenders.
-  NX_POWERPACK_CACHE_MODE: "read-only"
   NX_NO_CLOUD: "true"
 
 jobs:
