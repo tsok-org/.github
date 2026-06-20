@@ -580,7 +580,16 @@ jobs:
           if [ -f "pnpm-lock.yaml" ]; then
             PM="pnpm"
             INSTALL_FROZEN="pnpm install --frozen-lockfile"
-            INSTALL="pnpm install"
+            # POST-MIGRATE install MUST update the lockfile: `nx migrate`
+            # bumps the @nx/* specifiers in package.json but does NOT touch
+            # pnpm-lock.yaml, so a plain `pnpm install` — which pnpm runs with
+            # --frozen-lockfile by default whenever CI=true — aborts with
+            # ERR_PNPM_OUTDATED_LOCKFILE and the migrate step exits 1. Opting
+            # out of frozen here is exactly what Nx's own "Next steps" output
+            # prescribes (`pnpm install --no-frozen-lockfile`), and is the
+            # whole point of this install: regenerate the lockfile to match
+            # the migrated manifest so the PR carries both.
+            INSTALL="pnpm install --no-frozen-lockfile"
             EXEC="pnpm exec"
             DLX="pnpm dlx"
             LOCKFILE="pnpm-lock.yaml"
