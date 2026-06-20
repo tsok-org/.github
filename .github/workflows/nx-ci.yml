@@ -716,6 +716,20 @@ jobs:
       - name: Set Nx SHAs for affected detection
         if: inputs.nx_base == '' || inputs.nx_head == ''
         uses: nrwl/nx-set-shas@v4
+        with:
+          # Resolve "last successful run" against the repo's DEFAULT branch,
+          # not nx-set-shas's hard-coded `main` default. On a workspace whose
+          # integration branch ISN'T `main` (e.g. a `develop`-default,
+          # `main`-is-release-only layout), the default makes this action hunt
+          # for a last-successful run on origin/main — find none (main only
+          # ever sees release merges) — and silently fall back to a stale
+          # ancestor SHA. `nx affected` then diffs against a days-old base and
+          # marks ~the whole graph affected (lint/build balloon to every
+          # project). nx-affected-plan.yml already passes this; matching it
+          # here keeps the multi-target lane (lint+build) on the SAME affected
+          # base as the plan/shard lane. (Single-shard callers bypass this step
+          # entirely via the plan-supplied NX_BASE/NX_HEAD below.)
+          main-branch-name: ${{ github.event.repository.default_branch || 'main' }}
 
       - name: Use plan-supplied NX_BASE / NX_HEAD (single-shard mode)
         if: inputs.nx_base != '' && inputs.nx_head != ''
