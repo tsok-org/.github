@@ -78,6 +78,27 @@ on:
         type: string
         default: "ubuntu-latest"
 
+      container_image:
+        description: |
+          Optional container image the plan job runs inside. Empty (default)
+          = host mode (legacy behavior, bit-for-bit). Set this to a toolchain
+          image when nx's project graph needs a language toolchain to be
+          enumerated — e.g. `@monodon/rust`'s `createNodes` shells out to
+          `cargo metadata`, so WITHOUT cargo on PATH the Rust crates get no
+          name and `nx show projects --affected` ABORTS ("Failed to process
+          project graph … no name provided"). A toolchain-less plan would then
+          see zero affected Rust projects and silently skip their shards. Pull
+          of a private GHCR image needs `packages: read` on the caller.
+        required: false
+        type: string
+        default: ""
+
+      container_options:
+        description: "Docker options for the plan container (ignored in host mode)."
+        required: false
+        type: string
+        default: ""
+
       working_directory:
         description: "Working directory for the plan."
         required: false
@@ -280,6 +301,17 @@ jobs:
     name: Plan
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: ${{ inputs.timeout_minutes }}
+
+    # Optional toolchain container so nx can build the FULL project graph
+    # (e.g. @monodon/rust needs cargo to name Rust crates). Empty image =
+    # host mode, unchanged. `github.token` pulls private GHCR images when the
+    # caller grants `packages: read`.
+    container:
+      image: ${{ inputs.container_image }}
+      options: ${{ inputs.container_options }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
 
     defaults:
       run:
@@ -537,11 +569,32 @@ jobs:
 
             # Query nx for projects with this target on the affected set.
             # Output is a JSON array of project name strings.
+            #
+            # CRITICAL: do NOT mask a nx FAILURE into `[]`. An errored query
+            # (e.g. the graph can't be built because a language toolchain is
+            # missing — @monodon/rust aborts with "no name provided") must NOT
+            # silently become "nothing affected" → "skip all shards" → tests
+            # silently not run while the gate goes green. Distinguish a real
+            # empty result (exit 0, `[]`) from an ERROR (non-zero exit): on
+            # error, surface it and FAIL the plan so the breakage is loud, not
+            # a green-but-untested run.
+            nx_err="$(mktemp)"
             if [ "$AFFECTED_ONLY" = "true" ]; then
-              proj_json=$($NX_CMD show projects --affected --base="$NX_BASE" --head="$NX_HEAD" -t "$target" --json 2>/dev/null || echo '[]')
+              if ! proj_json=$($NX_CMD show projects --affected --base="$NX_BASE" --head="$NX_HEAD" -t "$target" --json 2>"$nx_err"); then
+                echo "::error::nx affected query failed for target '$target' (base=$NX_BASE head=$NX_HEAD). The project graph could not be computed — refusing to silently skip shards. Common cause: the plan job lacks a language toolchain needed to enumerate the graph (set the workflow's container_image)."
+                sed 's/^/    nx: /' "$nx_err" >&2 || true
+                rm -f "$nx_err"
+                exit 1
+              fi
             else
-              proj_json=$($NX_CMD show projects -t "$target" --json 2>/dev/null || echo '[]')
+              if ! proj_json=$($NX_CMD show projects -t "$target" --json 2>"$nx_err"); then
+                echo "::error::nx project query failed for target '$target' — refusing to silently skip shards."
+                sed 's/^/    nx: /' "$nx_err" >&2 || true
+                rm -f "$nx_err"
+                exit 1
+              fi
             fi
+            rm -f "$nx_err"
 
             # Drop excluded families from the shard distribution. Gate
             # evaluation (separate step) still sees them, so callers can
@@ -733,7 +786,16 @@ jobs:
 
             # Query nx with the glob pattern. Output: JSON array of
             # matching affected project names. Non-empty array = true.
-            matches=$($NX_CMD show projects --affected --base="$NX_BASE" --head="$NX_HEAD" -p "$pattern" --json 2>/dev/null || echo '[]')
+            # As with the shard query above, a nx ERROR must not masquerade as
+            # "gate false" (which would silently skip a gated lane) — fail loud.
+            gate_err="$(mktemp)"
+            if ! matches=$($NX_CMD show projects --affected --base="$NX_BASE" --head="$NX_HEAD" -p "$pattern" --json 2>"$gate_err"); then
+              echo "::error::nx affected query failed evaluating gate '$name=$pattern' (base=$NX_BASE head=$NX_HEAD) — refusing to silently report the gate as false."
+              sed 's/^/    nx: /' "$gate_err" >&2 || true
+              rm -f "$gate_err"
+              exit 1
+            fi
+            rm -f "$gate_err"
             count=$(echo "$matches" | jq 'length')
 
             if [ "$count" -gt 0 ]; then
