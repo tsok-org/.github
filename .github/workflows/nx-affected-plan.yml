@@ -715,7 +715,11 @@ jobs:
 
           # Final matrix wraps in {include: [...]} so callers consume via
           # strategy.matrix = fromJson(needs.plan.outputs.matrix).
-          matrix=$(jq -nc --argjson include "$matrix_entries" '{include: $include}')
+          # NOTE: the key MUST be quoted ("include") — `include` is a reserved
+          # jq keyword (module import), so a bare `{include: …}` fails on
+          # strict/newer jq ("unexpected include") even though older jq tolerated
+          # it. (Only reachable once the matrix is non-empty.)
+          matrix=$(jq -nc --argjson include "$matrix_entries" '{"include": $include}')
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           echo "has_shards=$has_shards" >> "$GITHUB_OUTPUT"
 
