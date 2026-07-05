@@ -1320,6 +1320,48 @@ jobs:
             $CMD
           done
       # ════════════════════════════════════════════════════════════════════════
+      # 🔬 SURFACE TEST FAILURES (diagnostic, on failure only)
+      # ════════════════════════════════════════════════════════════════════════
+      # Nx's dynamic task output truncates a failed task's captured stdout to a
+      # fixed line budget, so a large cargo-nextest suite's FAIL lines + summary
+      # can scroll past the cutoff and never reach the CI log — leaving a bare
+      # "exit code 1" with no nameable cause. nextest also writes a JUnit report
+      # to disk (enable it in the caller's .config/nextest.toml `ci` profile:
+      # `[profile.ci.junit]\npath = "junit.xml"`). This step — a plain step, NOT
+      # an Nx task, so its stdout is never truncated — reads that report back and
+      # prints the failing cases. A MISSING report is signal too: nextest writes
+      # it at end-of-run, so its absence points at a process kill (OOM/abort)
+      # mid-suite rather than a per-test failure. Best-effort + non-fatal: it
+      # never changes the job outcome.
+      - name: Surface test failures (nextest JUnit)
+        if: failure()
+        shell: bash
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          set +e
+          mapfile -t reports < <(
+            for r in "${CARGO_TARGET_DIR:-}" "$PWD" "target"; do
+              [ -n "$r" ] && find "$r" -type f -path '*nextest*junit.xml' 2>/dev/null
+            done | sort -u
+          )
+          if [ "${#reports[@]}" -eq 0 ]; then
+            echo "::warning::No nextest JUnit report found. nextest writes it at end-of-run, so its absence points at a process kill (OOM/abort) mid-suite rather than a per-test failure — or the failure was in a non-nextest step (lint/build)."
+            exit 0
+          fi
+          for f in "${reports[@]}"; do
+            total=$(grep -cE '<testcase ' "$f")
+            fails=$(grep -cE '<failure|<error' "$f")
+            echo "═══ nextest report: $f — ${total:-0} testcase(s), ${fails:-0} failure/error element(s) ═══"
+            if [ "${fails:-0}" -gt 0 ]; then
+              # -B2 prints the <testcase name=… classname=…> line preceding each
+              # <failure>/<error>, so the failing test is always named regardless
+              # of JUnit attribute order.
+              grep -B2 -E '<failure|<error' "$f"
+            fi
+          done
+          exit 0
+
+      # ════════════════════════════════════════════════════════════════════════
       # 📊 SUMMARY
       # ════════════════════════════════════════════════════════════════════════
 
