@@ -525,6 +525,25 @@ jobs:
             exit 1
           fi
 
+      # Self-hosted runners (bare ARC pods) ship neither `gh` nor `jq`; the
+      # identity, stale-PR-cleanup, PR-create and auto-merge steps need both.
+      # Install pinned releases into a temp dir when missing.
+      - name: Ensure gh + jq are available
+        run: |
+          BIN_DIR="${RUNNER_TEMP}/nx-migrate-bin"
+          mkdir -p "$BIN_DIR"
+          if ! command -v gh >/dev/null 2>&1; then
+            GH_VERSION="2.86.0"
+            curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz"               | tar -xzf - -C "$BIN_DIR" --strip-components=2 "gh_${GH_VERSION}_linux_amd64/bin/gh"
+            echo "installed gh ${GH_VERSION}"
+          fi
+          if ! command -v jq >/dev/null 2>&1; then
+            curl -fsSL -o "$BIN_DIR/jq" "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-linux-amd64"
+            chmod +x "$BIN_DIR/jq"
+            echo "installed jq 1.8.1"
+          fi
+          echo "$BIN_DIR" >> "$GITHUB_PATH"
+
       - name: Setup Git User
         run: |
           if [ "${{ steps.set-token.outputs.is_app_token }}" = "true" ]; then
