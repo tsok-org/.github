@@ -1007,8 +1007,15 @@ jobs:
             --title "$TITLE" \
             --body "$BODY" \
             --head "$BRANCH" \
-            --base "${{ inputs.base_branch }}" \
-            --label "${{ inputs.pr_labels }}")
+            --base "${{ inputs.base_branch }}")
+
+          # Labels are best-effort: `gh pr create --label` hard-fails when a
+          # label does not exist in the consumer repo, killing the whole
+          # migration after a successful push. A missing label is cosmetic.
+          if [ -n "${{ inputs.pr_labels }}" ]; then
+            gh pr edit "$BRANCH" --add-label "${{ inputs.pr_labels }}" \
+              || echo "⚠️ Could not apply labels '${{ inputs.pr_labels }}' (missing in repo?) — continuing."
+          fi
 
           PR_NUMBER=$(gh pr view "$BRANCH" --json number --jq .number)
 
