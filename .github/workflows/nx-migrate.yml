@@ -919,7 +919,11 @@ jobs:
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
 
             echo "📤 Pushing branch to origin..."
-            git push origin "$BRANCH" --force
+            # --no-verify: consumer repos may install git hooks (husky) that
+            # activate during this job's own `install` step; a workstation
+            # pre-push (fmt/lint against the runner's managed toolchain) must
+            # not gate the bot's push — the PR's checks validate the result.
+            git push --no-verify origin "$BRANCH" --force
           fi
 
       # ════════════════════════════════════════════════════════════════════════
