@@ -350,6 +350,25 @@ on:
       # ─────────────────────────────────────────────────────────────────────────
       # Container Runner (v3 addition)
       # ─────────────────────────────────────────────────────────────────────────
+      tools_prebaked:
+        description: |
+          Set true when the RUNNER ITSELF already carries the toolchains this
+          workflow would otherwise install — i.e. the runner pod image bakes
+          node / rust / go / terraform / system packages.
+
+          The host-mode counterpart to `container_image`. Both say "the tools
+          are already here"; they differ in WHERE the image is applied.
+          `container_image` runs the job inside an image and pays a per-job
+          container start (on a fresh dind that is a full re-extract of the
+          image, every job). `tools_prebaked` describes a runner whose OWN
+          image is the toolchain, so there is no container to start at all.
+
+          Set exactly ONE of the two, never both. Default false keeps existing
+          consumers bit-for-bit unchanged.
+        required: false
+        type: boolean
+        default: false
+
       container_image:
         description: |
           OCI image to run the job in via `jobs.<id>.container.image`. When
@@ -768,7 +787,7 @@ jobs:
       # .environment.yml from a workspace fully retires the path.
       - name: Detect legacy environment config
         id: legacy-envcfg
-        if: inputs.container_image == ''
+        if: inputs.container_image == '' && !inputs.tools_prebaked
         shell: bash
         working-directory: ${{ inputs.working_directory }}
         env:
@@ -784,7 +803,7 @@ jobs:
           fi
 
       - name: Setup environment (host mode, legacy)
-        if: inputs.container_image == '' && steps.legacy-envcfg.outputs.present == 'true'
+        if: inputs.container_image == '' && !inputs.tools_prebaked && steps.legacy-envcfg.outputs.present == 'true'
         uses: tsok-org/.github/actions/environment-setup@v5
         with:
           config: ${{ inputs.environment_config }}
@@ -794,6 +813,7 @@ jobs:
           skip: ${{ inputs.environment_skip }}
           only: ${{ inputs.environment_only }}
           container_image: ${{ inputs.container_image }}
+          tools_prebaked: ${{ inputs.tools_prebaked }}
 
       # ── Host mode: install caller-supplied system packages (v5 addition).
       # Replaces the .environment.yml + environment-setup-driven apt
@@ -801,7 +821,7 @@ jobs:
       # surfacing the package set in the calling workflow's PR diff.
       # Skipped in container mode (the image is the contract).
       - name: Install system packages (host mode)
-        if: inputs.container_image == '' && inputs.system_packages != ''
+        if: inputs.container_image == '' && !inputs.tools_prebaked && inputs.system_packages != ''
         shell: bash
         env:
           PACKAGES: ${{ inputs.system_packages }}
